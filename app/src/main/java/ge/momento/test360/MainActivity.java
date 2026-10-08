@@ -23,6 +23,7 @@ public class MainActivity extends Activity {
     private Button connectButton, sendButton;
     private EditText command;
     private Spinner channel, controlChannel;
+    private TextView testResult;
     private boolean scanning = false;
     private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
     private String lastPacket = "";
@@ -92,6 +93,11 @@ public class MainActivity extends Activity {
         addControl(controls,"－ სიჩქარის დაკლება",1,-1);
         addControl(controls,"💡 განათების ჩართვა",3,1);
         addControl(controls,"💡 განათების გამორთვა",3,0);
+        testResult = new TextView(this);
+        testResult.setText("ტესტის შედეგი: ჯერ არ ჩატარებულა");
+        testResult.setTextColor(Color.YELLOW);
+        testResult.setTextSize(17);
+        controls.addView(testResult);
         channel = new Spinner(this);
         channel.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"FFE1", "FFE2"}));
@@ -158,9 +164,27 @@ public class MainActivity extends Activity {
                 .setTitle("ექსპერიმენტული მართვის ტესტი")
                 .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო არჩეულ BLE არხზე?\n\n"+toHex(candidate))
                 .setNegativeButton("გაუქმება",null)
-                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->sendTo(candidate,controlChannel.getSelectedItemPosition()==0?ffe2:ffe1))
+                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->verifyTest(candidate,controlChannel.getSelectedItemPosition()==0?ffe2:ffe1,action,motor,lights,speed))
                 .show();
         });
+    }
+
+    private void verifyTest(byte[] data, UUID id, int action, int targetMotor, int targetLights, int targetSpeed) {
+        final int initialPackets = packetCount;
+        final int expected = action == 0 ? targetMotor : action == 1 ? targetSpeed : targetLights;
+        testResult.setText("ტესტის შედეგი: იგზავნება, ველოდები პასუხს...");
+        append("TEST BEGIN channel=" + id + " action=" + action + " expected=" + expected);
+        sendTo(data,id);
+        handler.postDelayed(() -> {
+            int actual = action == 0 ? observedMotor : action == 1 ? observedSpeed : observedLights;
+            boolean changed = actual == expected;
+            String outcome = changed && packetCount > initialPackets
+                ? "სტატუსში სასურველი მდგომარეობა დაფიქსირდა (ფიზიკურად გადაამოწმე)"
+                : "კონტროლერმა სასურველი მდგომარეობა არ დაადასტურა";
+            testResult.setText("ტესტის შედეგი: " + outcome);
+            append("TEST END: " + outcome + " expected=" + expected + " actual=" + actual
+                + " notifications=" + (packetCount-initialPackets));
+        },2500);
     }
 
     private void append(String message) {
