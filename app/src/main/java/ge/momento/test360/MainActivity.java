@@ -6,6 +6,9 @@ import android.app.AlertDialog;
 import android.bluetooth.*;
 import android.bluetooth.le.*;
 import android.content.pm.PackageManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.graphics.Color;
 import android.os.*;
 import android.view.Gravity;
@@ -21,6 +24,10 @@ public class MainActivity extends Activity {
     private EditText command;
     private Spinner channel;
     private boolean scanning = false;
+    private String lastPacket = "";
+    private int duplicatePackets = 0;
+    private int packetCount = 0;
+    private final StringBuilder diagnosticLog = new StringBuilder();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final UUID serviceId = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private final UUID ffe1 = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
@@ -65,6 +72,14 @@ public class MainActivity extends Activity {
         caution.setText("START/STOP კოდები ჯერ უცნობია. ტესტირებისას პლატფორმა ცარიელი უნდა იყოს.");
         caution.setTextColor(Color.YELLOW);
         root.addView(caution);
+        Button copyLog = new Button(this);
+        copyLog.setText("დიაგნოსტიკის კოპირება");
+        root.addView(copyLog);
+        copyLog.setOnClickListener(v -> {
+            ClipboardManager clipboard = (ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText("MOMENTO BLE diagnostics",diagnosticLog.toString()));
+            Toast.makeText(this,"ლოგი დაკოპირებულია",Toast.LENGTH_SHORT).show();
+        });
         log = new TextView(this);
         log.setTextColor(Color.LTGRAY);
         log.setTextSize(12);
@@ -79,7 +94,10 @@ public class MainActivity extends Activity {
     }
 
     private void append(String message) {
-        runOnUiThread(() -> log.append(message + "\n"));
+        runOnUiThread(() -> {
+            diagnosticLog.append(message).append("\n");
+            log.append(message + "\n");
+        });
     }
 
     private boolean permitted() {
@@ -144,6 +162,9 @@ public class MainActivity extends Activity {
         gatt = device.connectGatt(this,false,new BluetoothGattCallback() {
             @Override public void onConnectionStateChange(BluetoothGatt g,int code,int state) {
                 if (code == BluetoothGatt.GATT_SUCCESS && state == BluetoothProfile.STATE_CONNECTED) {
+                    lastPacket = "";
+                    duplicatePackets = 0;
+                    packetCount = 0;
                     append("CONNECTED");
                     runOnUiThread(() -> status.setText("დაკავშირებულია"));
                     g.discoverServices();
@@ -179,7 +200,16 @@ public class MainActivity extends Activity {
                 });
             }
             @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic c) {
-                append("RECEIVED " + c.getUuid() + " : " + toHex(c.getValue()));
+                String packet = toHex(c.getValue());
+                packetCount++;
+                if (packet.equals(lastPacket)) {
+                    duplicatePackets++;
+                    if (duplicatePackets % 50 == 0) append("REPEATED x" + duplicatePackets + " (total=" + packetCount + ")");
+                } else {
+                    append("CHANGE #" + packetCount + " : " + packet + " (previous repeated " + duplicatePackets + " times)");
+                    lastPacket = packet;
+                    duplicatePackets = 0;
+                }
             }
             @Override public void onCharacteristicWrite(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
                 append("WRITE result=" + code);
