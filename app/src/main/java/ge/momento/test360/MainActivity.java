@@ -160,11 +160,12 @@ public class MainActivity extends Activity {
             for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
             data[12]=(byte)sum;
             final byte[] candidate = data;
+            final int targetMotor = motor, targetLights = lights, targetSpeed = speed;
             new AlertDialog.Builder(this)
                 .setTitle("ექსპერიმენტული მართვის ტესტი")
                 .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო არჩეულ BLE არხზე?\n\n"+toHex(candidate))
                 .setNegativeButton("გაუქმება",null)
-                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->verifyTest(candidate,controlChannel.getSelectedItemPosition()==0?ffe2:ffe1,action,motor,lights,speed))
+                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->verifyTest(candidate,controlChannel.getSelectedItemPosition()==0?ffe2:ffe1,action,targetMotor,targetLights,targetSpeed))
                 .show();
         });
     }
