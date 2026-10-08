@@ -79,10 +79,10 @@ public class MainActivity extends Activity {
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         root.addView(controls);
-        addControl(controls,"▶ START",1,0);
+        addControl(controls,"▶ START",0,1);
         addControl(controls,"■ STOP",0,0);
-        addControl(controls,"＋ სიჩქარის მომატება",2,1);
-        addControl(controls,"－ სიჩქარის დაკლება",2,-1);
+        addControl(controls,"＋ სიჩქარის მომატება",1,1);
+        addControl(controls,"－ სიჩქარის დაკლება",1,-1);
         addControl(controls,"💡 განათების ჩართვა",3,1);
         addControl(controls,"💡 განათების გამორთვა",3,0);
         channel = new Spinner(this);
@@ -116,8 +116,11 @@ public class MainActivity extends Activity {
         log.setTextSize(12);
         ScrollView scroll = new ScrollView(this);
         scroll.addView(log);
-        root.addView(scroll, new LinearLayout.LayoutParams(-1,0,1));
-        setContentView(root);
+        root.addView(scroll, new LinearLayout.LayoutParams(-1,520));
+        ScrollView page = new ScrollView(this);
+        page.setFillViewport(true);
+        page.addView(root);
+        setContentView(page);
         BluetoothManager manager = (BluetoothManager)getSystemService(BLUETOOTH_SERVICE);
         adapter = manager.getAdapter();
         connectButton.setOnClickListener(v -> scan());
@@ -134,6 +137,7 @@ public class MainActivity extends Activity {
                 return;
             }
             int motor = observedMotor, lights = observedLights, speed = observedSpeed;
+            append("BUTTON " + title + " current motor=" + motor + " speed=" + speed + " lights=" + lights);
             if (action == 0) motor = value;
             if (action == 1) speed = Math.max(0,Math.min(255,speed+value));
             if (action == 3) lights = value;
@@ -144,7 +148,7 @@ public class MainActivity extends Activity {
             final byte[] candidate = data;
             new AlertDialog.Builder(this)
                 .setTitle("ექსპერიმენტული მართვის ტესტი")
-                .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო FFE1 არხზე?\\n\\n"+toHex(candidate))
+                .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო FFE1 არხზე?\n\n"+toHex(candidate))
                 .setNegativeButton("გაუქმება",null)
                 .setPositiveButton("ერთჯერადი ტესტი",(d,w)->sendTo(candidate,ffe1))
                 .show();
@@ -289,7 +293,7 @@ public class MainActivity extends Activity {
                 }
             }
             @Override public void onCharacteristicWrite(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
-                append("WRITE result=" + code);
+                append("WRITE result=" + code + " (0 means BLE write accepted, not motor action)");
             }
         });
     }
