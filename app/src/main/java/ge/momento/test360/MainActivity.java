@@ -22,7 +22,7 @@ public class MainActivity extends Activity {
     private TextView status, log, motorStatus, speedStatus, lightStatus;
     private Button connectButton, sendButton;
     private EditText command;
-    private Spinner channel;
+    private Spinner channel, controlChannel;
     private boolean scanning = false;
     private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
     private String lastPacket = "";
@@ -79,6 +79,13 @@ public class MainActivity extends Activity {
         LinearLayout controls = new LinearLayout(this);
         controls.setOrientation(LinearLayout.VERTICAL);
         root.addView(controls);
+        TextView hint = new TextView(this);
+        hint.setText("მართვის არხი (პირველად FFE2 სცადე)");
+        hint.setTextColor(Color.YELLOW);
+        controls.addView(hint);
+        controlChannel = new Spinner(this);
+        controlChannel.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"FFE2 — საცდელი","FFE1 — საცდელი"}));
+        controls.addView(controlChannel);
         addControl(controls,"▶ START",0,1);
         addControl(controls,"■ STOP",0,0);
         addControl(controls,"＋ სიჩქარის მომატება",1,1);
@@ -141,6 +148,7 @@ public class MainActivity extends Activity {
             if (action == 0) motor = value;
             if (action == 1) speed = Math.max(0,Math.min(255,speed+value));
             if (action == 3) lights = value;
+            append("TEST channel=" + (controlChannel.getSelectedItemPosition()==0 ? "FFE2" : "FFE1"));
             byte[] data = new byte[]{0x11,0x22,(byte)motor,(byte)lights,(byte)speed,0,0,0,1,0,(byte)0xff,0,0};
             int sum=0;
             for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
@@ -148,9 +156,9 @@ public class MainActivity extends Activity {
             final byte[] candidate = data;
             new AlertDialog.Builder(this)
                 .setTitle("ექსპერიმენტული მართვის ტესტი")
-                .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო FFE1 არხზე?\n\n"+toHex(candidate))
+                .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო არჩეულ BLE არხზე?\n\n"+toHex(candidate))
                 .setNegativeButton("გაუქმება",null)
-                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->sendTo(candidate,ffe1))
+                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->sendTo(candidate,controlChannel.getSelectedItemPosition()==0?ffe2:ffe1))
                 .show();
         });
     }
@@ -340,7 +348,9 @@ public class MainActivity extends Activity {
             BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT :
             BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE);
         c.setValue(data);
-        append("SEND " + id + " : " + toHex(data) + " queued=" + gatt.writeCharacteristic(c));
+        boolean queued = gatt.writeCharacteristic(c);
+        append("SEND " + id + " : " + toHex(data) + " queued=" + queued);
+        runOnUiThread(() -> Toast.makeText(this,queued ? "BLE ბრძანება გაგზავნილია (შესრულება უცნობია)" : "BLE გაგზავნა ვერ მოხერხდა",Toast.LENGTH_LONG).show());
     }
 
     private String toHex(byte[] bytes) {
