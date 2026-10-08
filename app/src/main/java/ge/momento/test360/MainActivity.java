@@ -19,7 +19,7 @@ public class MainActivity extends Activity {
     private BluetoothAdapter adapter;
     private BluetoothLeScanner scanner;
     private BluetoothGatt gatt;
-    private TextView status, log;
+    private TextView status, log, motorStatus;
     private Button connectButton, sendButton;
     private EditText command;
     private Spinner channel;
@@ -51,6 +51,12 @@ public class MainActivity extends Activity {
         status.setTextColor(Color.WHITE);
         status.setPadding(0,20,0,16);
         root.addView(status);
+        motorStatus = new TextView(this);
+        motorStatus.setText("ძრავის მდგომარეობა: უცნობია");
+        motorStatus.setTextSize(19);
+        motorStatus.setTextColor(Color.CYAN);
+        motorStatus.setPadding(0,10,0,14);
+        root.addView(motorStatus);
         connectButton = new Button(this);
         connectButton.setText("დაკავშირება 360Tok");
         root.addView(connectButton);
@@ -165,6 +171,7 @@ public class MainActivity extends Activity {
                     lastPacket = "";
                     duplicatePackets = 0;
                     packetCount = 0;
+                    runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ველოდები მონაცემებს"));
                     append("CONNECTED");
                     runOnUiThread(() -> status.setText("დაკავშირებულია"));
                     g.discoverServices();
@@ -208,6 +215,14 @@ public class MainActivity extends Activity {
                 } else {
                     append("CHANGE #" + packetCount + " : " + packet + " (previous repeated " + duplicatePackets + " times)");
                     lastPacket = packet;
+                    String normalized = packet.replace(" ","");
+                    if (normalized.equals("11220101040000000100FF0039")) {
+                        runOnUiThread(() -> motorStatus.setText("ძრავა: ჩართულია ●"));
+                    } else if (normalized.equals("11220001040000000100FF0038")) {
+                        runOnUiThread(() -> motorStatus.setText("ძრავა: გაჩერებულია ■"));
+                    } else {
+                        runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ახალი მონაცემი"));
+                    }
                     duplicatePackets = 0;
                 }
             }
