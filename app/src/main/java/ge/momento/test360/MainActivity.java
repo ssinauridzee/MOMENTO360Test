@@ -19,7 +19,7 @@ public class MainActivity extends Activity {
     private BluetoothAdapter adapter;
     private BluetoothLeScanner scanner;
     private BluetoothGatt gatt;
-    private TextView status, log, motorStatus;
+    private TextView status, log, motorStatus, speedStatus, lightStatus;
     private Button connectButton, sendButton;
     private EditText command;
     private Spinner channel;
@@ -57,6 +57,16 @@ public class MainActivity extends Activity {
         motorStatus.setTextColor(Color.CYAN);
         motorStatus.setPadding(0,10,0,14);
         root.addView(motorStatus);
+        speedStatus = new TextView(this);
+        speedStatus.setText("სიჩქარე: უცნობია");
+        speedStatus.setTextSize(18);
+        speedStatus.setTextColor(Color.WHITE);
+        root.addView(speedStatus);
+        lightStatus = new TextView(this);
+        lightStatus.setText("განათება: უცნობია");
+        lightStatus.setTextSize(18);
+        lightStatus.setTextColor(Color.WHITE);
+        root.addView(lightStatus);
         connectButton = new Button(this);
         connectButton.setText("დაკავშირება 360Tok");
         root.addView(connectButton);
@@ -215,13 +225,20 @@ public class MainActivity extends Activity {
                 } else {
                     append("CHANGE #" + packetCount + " : " + packet + " (previous repeated " + duplicatePackets + " times)");
                     lastPacket = packet;
-                    String normalized = packet.replace(" ","");
-                    if (normalized.equals("11220101040000000100FF0039")) {
-                        runOnUiThread(() -> motorStatus.setText("ძრავა: ჩართულია ●"));
-                    } else if (normalized.equals("11220001040000000100FF0038")) {
-                        runOnUiThread(() -> motorStatus.setText("ძრავა: გაჩერებულია ■"));
-                    } else {
-                        runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ახალი მონაცემი"));
+                    byte[] data = c.getValue();
+                    if (data != null && data.length == 13 && (data[0] & 255) == 0x11 && (data[1] & 255) == 0x22) {
+                        int checksum = 0;
+                        for (int i = 0; i < 12; i++) checksum = (checksum + (data[i] & 255)) & 255;
+                        if (checksum == (data[12] & 255)) {
+                            final int motor = data[2] & 255;
+                            final int lights = data[3] & 255;
+                            final int speed = data[4] & 255;
+                            runOnUiThread(() -> {
+                                motorStatus.setText(motor == 1 ? "ძრავა: ჩართულია ●" : motor == 0 ? "ძრავა: გაჩერებულია ■" : "ძრავა: უცნობი მდგომარეობა " + motor);
+                                speedStatus.setText("სიჩქარე: " + speed);
+                                lightStatus.setText(lights == 1 ? "განათება: ჩართულია" : lights == 0 ? "განათება: გამორთულია" : "განათება: უცნობი მდგომარეობა " + lights);
+                            });
+                        } else append("INVALID CHECKSUM: " + packet);
                     }
                     duplicatePackets = 0;
                 }
