@@ -24,6 +24,7 @@ public class MainActivity extends Activity {
     private EditText command;
     private Spinner channel;
     private boolean scanning = false;
+    private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
     private String lastPacket = "";
     private int duplicatePackets = 0;
     private int packetCount = 0;
@@ -70,6 +71,20 @@ public class MainActivity extends Activity {
         connectButton = new Button(this);
         connectButton.setText("დაკავშირება 360Tok");
         root.addView(connectButton);
+        TextView controlsTitle = new TextView(this);
+        controlsTitle.setText("მართვის პანელი — სატესტო რეჟიმი");
+        controlsTitle.setTextColor(Color.WHITE);
+        controlsTitle.setTextSize(19);
+        root.addView(controlsTitle);
+        LinearLayout controls = new LinearLayout(this);
+        controls.setOrientation(LinearLayout.VERTICAL);
+        root.addView(controls);
+        addControl(controls,"▶ START",1,0);
+        addControl(controls,"■ STOP",0,0);
+        addControl(controls,"＋ სიჩქარის მომატება",2,1);
+        addControl(controls,"－ სიჩქარის დაკლება",2,-1);
+        addControl(controls,"💡 განათების ჩართვა",3,1);
+        addControl(controls,"💡 განათების გამორთვა",3,0);
         channel = new Spinner(this);
         channel.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"FFE1", "FFE2"}));
@@ -107,6 +122,33 @@ public class MainActivity extends Activity {
         adapter = manager.getAdapter();
         connectButton.setOnClickListener(v -> scan());
         sendButton.setOnClickListener(v -> prepareSend());
+    }
+
+    private void addControl(LinearLayout parent, String title, int action, int value) {
+        Button b = new Button(this);
+        b.setText(title);
+        parent.addView(b);
+        b.setOnClickListener(v -> {
+            if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
+                Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
+                return;
+            }
+            int motor = observedMotor, lights = observedLights, speed = observedSpeed;
+            if (action == 0) motor = value;
+            if (action == 1) speed = Math.max(0,Math.min(255,speed+value));
+            if (action == 3) lights = value;
+            byte[] data = new byte[]{0x11,0x22,(byte)motor,(byte)lights,(byte)speed,0,0,0,1,0,(byte)0xff,0,0};
+            int sum=0;
+            for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
+            data[12]=(byte)sum;
+            final byte[] candidate = data;
+            new AlertDialog.Builder(this)
+                .setTitle("ექსპერიმენტული მართვის ტესტი")
+                .setMessage("ეს არის სტატუსის პაკეტიდან შედგენილი ჰიპოთეზური ბრძანება და შეიძლება არ იმუშაოს. პლატფორმა აუცილებლად ცარიელი უნდა იყოს. გაუგზავნო FFE1 არხზე?\\n\\n"+toHex(candidate))
+                .setNegativeButton("გაუქმება",null)
+                .setPositiveButton("ერთჯერადი ტესტი",(d,w)->sendTo(candidate,ffe1))
+                .show();
+        });
     }
 
     private void append(String message) {
@@ -233,6 +275,9 @@ public class MainActivity extends Activity {
                             final int motor = data[2] & 255;
                             final int lights = data[3] & 255;
                             final int speed = data[4] & 255;
+                            observedMotor=motor;
+                            observedLights=lights;
+                            observedSpeed=speed;
                             runOnUiThread(() -> {
                                 motorStatus.setText(motor == 1 ? "ძრავა: ჩართულია ●" : motor == 0 ? "ძრავა: გაჩერებულია ■" : "ძრავა: უცნობი მდგომარეობა " + motor);
                                 speedStatus.setText("სიჩქარე: " + speed);
@@ -270,6 +315,18 @@ public class MainActivity extends Activity {
         UUID id = channel.getSelectedItemPosition() == 0 ? ffe1 : ffe2;
         BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(id);
         if (c == null) { append("Characteristic not found"); return; }
+        writeToCharacteristic(c,data,id);
+    }
+
+    private void sendTo(byte[] data,UUID id) {
+        if (gatt == null) { append("Not connected"); return; }
+        BluetoothGattService service = gatt.getService(serviceId);
+        BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(id);
+        if (c == null) { append("Characteristic not found"); return; }
+        writeToCharacteristic(c,data,id);
+    }
+
+    private void writeToCharacteristic(BluetoothGattCharacteristic c,byte[] data,UUID id) {
         int props = c.getProperties();
         if ((props & (BluetoothGattCharacteristic.PROPERTY_WRITE |
                       BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) == 0) {
