@@ -115,7 +115,7 @@ public class MainActivity extends Activity {
         testResult.setTextSize(17);
         controls.addView(testResult);
         autoButton = new Button(this);
-        autoButton.setText("🧪 ფუნქციების ავტოტესტი (6 მცდელობა)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (12 მცდელობა)");
         controls.addView(autoButton);
         autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
         channel = new Spinner(this);
@@ -170,7 +170,7 @@ public class MainActivity extends Activity {
             return;
         }
         new AlertDialog.Builder(this).setTitle("ფუნქციების ავტომატური ტესტი")
-            .setMessage("6 მცდელობა: განათების შეცვლა, სიჩქარის +1 ცვლილება და START, თითოეული FFE2/FFE1 არხზე. 4 წამი თითო მცდელობას შორის. ეს მხოლოდ ჰიპოთეზური 13-ბაიტიანი ფორმატია; შესაძლოა საერთოდ არ იმუშაოს. პლატფორმა ცარიელია? ფიზიკური პულტი ხელთ გაქვს?")
+            .setMessage("12 მცდელობა: განათების შეცვლა, სიჩქარის +1 ცვლილება და START, თითოეული FFE2/FFE1 არხზე. 4 წამი თითო მცდელობას შორის. ეს მხოლოდ ჰიპოთეზური 13-ბაიტიანი ფორმატია; შესაძლოა საერთოდ არ იმუშაოს. პლატფორმა ცარიელია? ფიზიკური პულტი ხელთ გაქვს?")
             .setNegativeButton("გაუქმება",null)
             .setPositiveButton("დაწყება",(d,w)->startAutoTest()).show();
     }
@@ -189,7 +189,7 @@ public class MainActivity extends Activity {
     private void stopAutoTest(String reason) {
         if (!autoTesting) return;
         autoTesting = false;
-        autoButton.setText("🧪 ფუნქციების ავტოტესტი (6 მცდელობა)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (12 მცდელობა)");
         testResult.setText("ავტოტესტი: " + reason);
         append("AUTO TEST END: " + reason);
     }
@@ -203,11 +203,12 @@ public class MainActivity extends Activity {
             stopAutoTest("ცვლილება დაფიქსირდა! motor=" + observedMotor + " lights=" + observedLights + " speed=" + observedSpeed + ". ფიზიკურად გადაამოწმე");
             return;
         }
-        if (autoStep >= 6) {
-            stopAutoTest("6 მცდელობა დასრულდა; სტატუსში ცვლილება არ დაფიქსირდა"); return;
+        if (autoStep >= 12) {
+            stopAutoTest("12 მცდელობა დასრულდა; სტატუსში ცვლილება არ დაფიქსირდა"); return;
         }
-        int function = autoStep / 2;
-        UUID id = testChannels[autoStep % 2];
+        int function = autoStep / 4;
+        UUID id = testChannels[(autoStep / 2) % 2];
+        boolean withoutResponse = (autoStep % 2) == 1;
         int motor = baselineMotor;
         int lights = baselineLights;
         int speed = baselineSpeed;
@@ -220,9 +221,9 @@ public class MainActivity extends Activity {
         for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
         data[12]=(byte)sum;
         autoStep++;
-        testResult.setText("ავტოტესტი " + autoStep + "/6: " + name + " " + (id.equals(ffe2)?"FFE2":"FFE1"));
-        append("AUTO STEP " + autoStep + "/6 " + name + " " + id + " HEX=" + toHex(data));
-        sendTo(data,id);
+        testResult.setText("ავტოტესტი " + autoStep + "/12: " + name + " " + (id.equals(ffe2)?"FFE2":"FFE1") + (withoutResponse?" NO_RESPONSE":" WRITE"));
+        append("AUTO STEP " + autoStep + "/12 " + name + " " + id + " mode=" + (withoutResponse?"NO_RESPONSE":"WRITE") + " HEX=" + toHex(data));
+        sendToMode(data,id,withoutResponse);
         handler.postDelayed(() -> { if (autoTesting) nextAutoStep(); },4000);
     }
 
@@ -456,6 +457,19 @@ public class MainActivity extends Activity {
         BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(id);
         if (c == null) { append("Characteristic not found"); return; }
         writeToCharacteristic(c,data,id);
+    }
+
+    private void sendToMode(byte[] data, UUID id, boolean withoutResponse) {
+        if (gatt == null || !bleConnected || !bleReady) { append("Not connected"); return; }
+        BluetoothGattService service = gatt.getService(serviceId);
+        BluetoothGattCharacteristic c = service == null ? null : service.getCharacteristic(id);
+        if (c == null) { append("Characteristic not found"); return; }
+        int required = withoutResponse ? BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE : BluetoothGattCharacteristic.PROPERTY_WRITE;
+        if ((c.getProperties() & required) == 0) { append("Write mode unsupported"); return; }
+        c.setWriteType(withoutResponse ? BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE : BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+        c.setValue(data);
+        boolean queued = gatt.writeCharacteristic(c);
+        append("AUTO SEND " + id + " mode=" + (withoutResponse?"NO_RESPONSE":"WRITE") + " queued=" + queued);
     }
 
     private void sendTo(byte[] data,UUID id) {
