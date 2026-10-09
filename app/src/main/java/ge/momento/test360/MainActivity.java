@@ -29,6 +29,8 @@ public class MainActivity extends Activity {
     private String lastPacket = "";
     private int duplicatePackets = 0;
     private int packetCount = 0;
+    private long lastStatusAt = 0;
+    private int statusSequence = 0;
     private final StringBuilder diagnosticLog = new StringBuilder();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final UUID serviceId = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
@@ -73,7 +75,7 @@ public class MainActivity extends Activity {
         connectButton.setText("დაკავშირება 360Tok");
         root.addView(connectButton);
         TextView controlsTitle = new TextView(this);
-        controlsTitle.setText("მართვის პანელი — სატესტო რეჟიმი");
+        controlsTitle.setText("მართვის პანელი — ექსპერიმენტული რეჟიმი");
         controlsTitle.setTextColor(Color.WHITE);
         controlsTitle.setTextSize(19);
         root.addView(controlsTitle);
@@ -81,7 +83,7 @@ public class MainActivity extends Activity {
         controls.setOrientation(LinearLayout.VERTICAL);
         root.addView(controls);
         TextView hint = new TextView(this);
-        hint.setText("მართვის არხი (პირველად FFE2 სცადე)");
+        hint.setText("მართვის ბრძანებები დაუდასტურებელია. არხის არჩევა:");
         hint.setTextColor(Color.YELLOW);
         controls.addView(hint);
         controlChannel = new Spinner(this);
@@ -95,6 +97,13 @@ public class MainActivity extends Activity {
         addControl(controls,"💡 განათების გამორთვა",3,0);
         testResult = new TextView(this);
         testResult.setText("ტესტის შედეგი: ჯერ არ ჩატარებულა");
+        Button rfMonitor = new Button(this);
+        rfMonitor.setText("📡 პულტის ბრძანებების შესწავლა");
+        controls.addView(rfMonitor);
+        rfMonitor.setOnClickListener(v -> new AlertDialog.Builder(this)
+            .setTitle("პულტის BLE მონიტორინგი")
+            .setMessage("აპი აკვირდება პულტით გამოწვეულ ცვლილებებს. დააჭირე პულტზე თითო ღილაკს ცალ-ცალკე და ნახე ძრავის, სიჩქარისა და განათების ცვლილებები. ეს არ ნიშნავს, რომ RF კოდებს ვკითხულობთ. დიაგნოსტიკა დააკოპირე და გამომიგზავნე.")
+            .setPositiveButton("გასაგებია",null).show());
         testResult.setTextColor(Color.YELLOW);
         testResult.setTextSize(17);
         controls.addView(testResult);
@@ -145,7 +154,7 @@ public class MainActivity extends Activity {
         b.setText(title);
         parent.addView(b);
         b.setOnClickListener(v -> {
-            if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
+            if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0 || android.os.SystemClock.elapsedRealtime()-lastStatusAt > 6000) {
                 Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
                 return;
             }
@@ -172,13 +181,15 @@ public class MainActivity extends Activity {
 
     private void verifyTest(byte[] data, UUID id, int action, int targetMotor, int targetLights, int targetSpeed) {
         final int initialPackets = packetCount;
+        final int initialSequence = statusSequence;
+        final int initialValue = action == 0 ? observedMotor : action == 1 ? observedSpeed : observedLights;
         final int expected = action == 0 ? targetMotor : action == 1 ? targetSpeed : targetLights;
         testResult.setText("ტესტის შედეგი: იგზავნება, ველოდები პასუხს...");
         append("TEST BEGIN channel=" + id + " action=" + action + " expected=" + expected);
         sendTo(data,id);
         handler.postDelayed(() -> {
             int actual = action == 0 ? observedMotor : action == 1 ? observedSpeed : observedLights;
-            boolean changed = actual == expected;
+            boolean changed = actual == expected && initialValue != expected && statusSequence > initialSequence;
             String outcome = changed && packetCount > initialPackets
                 ? "სტატუსში სასურველი მდგომარეობა დაფიქსირდა (ფიზიკურად გადაამოწმე)"
                 : "კონტროლერმა სასურველი მდგომარეობა არ დაადასტურა";
@@ -260,6 +271,8 @@ public class MainActivity extends Activity {
                     lastPacket = "";
                     duplicatePackets = 0;
                     packetCount = 0;
+                    observedMotor = -1; observedLights = -1; observedSpeed = -1;
+                    lastStatusAt = 0; statusSequence = 0;
                     runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ველოდები მონაცემებს"));
                     append("CONNECTED");
                     runOnUiThread(() -> status.setText("დაკავშირებულია"));
@@ -269,6 +282,10 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> {
                         status.setText("კავშირი გათიშულია");
                         sendButton.setEnabled(false);
+                        observedMotor = -1; observedLights = -1; observedSpeed = -1;
+                        motorStatus.setText("ძრავა: კავშირი გათიშულია");
+                        speedStatus.setText("სიჩქარე: უცნობია");
+                        lightStatus.setText("განათება: უცნობია");
                     });
                 }
             }
@@ -315,6 +332,8 @@ public class MainActivity extends Activity {
                             observedMotor=motor;
                             observedLights=lights;
                             observedSpeed=speed;
+                            lastStatusAt=android.os.SystemClock.elapsedRealtime();
+                            statusSequence++;
                             runOnUiThread(() -> {
                                 motorStatus.setText(motor == 1 ? "ძრავა: ჩართულია ●" : motor == 0 ? "ძრავა: გაჩერებულია ■" : "ძრავა: უცნობი მდგომარეობა " + motor);
                                 speedStatus.setText("სიჩქარე: " + speed);
