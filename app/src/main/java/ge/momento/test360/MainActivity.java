@@ -25,6 +25,7 @@ public class MainActivity extends Activity {
     private Spinner channel, controlChannel;
     private TextView testResult;
     private boolean scanning = false;
+    private boolean notificationSubscribed = false;
     private volatile boolean bleConnected = false;
     private volatile boolean bleReady = false;
     private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
@@ -357,12 +358,14 @@ public class MainActivity extends Activity {
                     runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ველოდები მონაცემებს"));
                     bleConnected = true;
                     bleReady = false;
+                    notificationSubscribed = false;
                     append("CONNECTED");
                     runOnUiThread(() -> status.setText("დაკავშირებულია"));
                     g.discoverServices();
                 } else {
                     bleConnected = false;
                     bleReady = false;
+                    notificationSubscribed = false;
                     append("Disconnected: " + code);
                     runOnUiThread(() -> { if (autoTesting) stopAutoTest("კავშირი გაწყდა"); });
                     runOnUiThread(() -> {
@@ -385,22 +388,37 @@ public class MainActivity extends Activity {
                 for (BluetoothGattCharacteristic c : service.getCharacteristics())
                     append("CHAR " + c.getUuid() + " props=" + c.getProperties());
                 BluetoothGattCharacteristic notify = service.getCharacteristic(ffe1);
-                if (notify != null && (notify.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) != 0) {
-                    g.setCharacteristicNotification(notify,true);
-                    BluetoothGattDescriptor descriptor = notify.getDescriptor(cccd);
-                    if (descriptor != null) {
-                        descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
-                        g.writeDescriptor(descriptor);
-                    }
+                if (notify == null || (notify.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0) {
+                    append("NOTIFY ERROR: FFE1 notification characteristic unavailable");
+                    return;
                 }
-                bleReady = true;
+                boolean enabled = g.setCharacteristicNotification(notify,true);
+                append("NOTIFY local enable=" + enabled);
+                if (!enabled) return;
+                BluetoothGattDescriptor descriptor = notify.getDescriptor(cccd);
+                if (descriptor == null) {
+                    append("NOTIFY ERROR: FFE1 CCCD descriptor missing");
+                    return;
+                }
+                descriptor.setValue(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE);
+                boolean queued = g.writeDescriptor(descriptor);
+                append("CCCD subscription queued=" + queued);
+                if (!queued) append("NOTIFY ERROR: CCCD write not queued");
+            }
+            @Override public void onDescriptorWrite(BluetoothGatt g,BluetoothGattDescriptor d,int code) {
+                if (!cccd.equals(d.getUuid()) || !ffe1.equals(d.getCharacteristic().getUuid())) return;
+                append("CCCD subscription result=" + code);
+                notificationSubscribed = code == BluetoothGatt.GATT_SUCCESS;
+                bleReady = notificationSubscribed;
                 runOnUiThread(() -> {
-                    sendButton.setEnabled(true);
-                    append("READY");
+                    sendButton.setEnabled(notificationSubscribed);
+                    status.setText(notificationSubscribed ? "Bluetooth: დაკავშირებულია · შეტყობინებები აქტიურია" : "Bluetooth: დაკავშირებულია · შეტყობინებების შეცდომა " + code);
                 });
+                if (notificationSubscribed) append("READY: FFE1 notifications confirmed");
             }
             @Override public void onCharacteristicChanged(BluetoothGatt g,BluetoothGattCharacteristic c) {
                 String packet = toHex(c.getValue());
+                if (packetCount < 15) append("RX " + c.getUuid() + " HEX=" + packet);
                 packetCount++;
                 if (packet.equals(lastPacket)) {
                     duplicatePackets++;
