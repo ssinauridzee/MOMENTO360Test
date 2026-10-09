@@ -115,7 +115,7 @@ public class MainActivity extends Activity {
         testResult.setTextSize(17);
         controls.addView(testResult);
         autoButton = new Button(this);
-        autoButton.setText("🧪 ფუნქციების ავტოტესტი (12 მცდელობა)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (24 მცდელობა)");
         controls.addView(autoButton);
         autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
         channel = new Spinner(this);
@@ -170,7 +170,7 @@ public class MainActivity extends Activity {
             return;
         }
         new AlertDialog.Builder(this).setTitle("ფუნქციების ავტომატური ტესტი")
-            .setMessage("12 მცდელობა: განათების შეცვლა, სიჩქარის +1 ცვლილება და START, თითოეული FFE2/FFE1 არხზე. 4 წამი თითო მცდელობას შორის. ეს მხოლოდ ჰიპოთეზური 13-ბაიტიანი ფორმატია; შესაძლოა საერთოდ არ იმუშაოს. პლატფორმა ცარიელია? ფიზიკური პულტი ხელთ გაქვს?")
+            .setMessage("24 მცდელობა: განათების შეცვლა, სიჩქარის +1 ცვლილება და START, თითოეული FFE2/FFE1 არხზე. 4 წამი თითო მცდელობას შორის. ეს მხოლოდ ჰიპოთეზური 13-ბაიტიანი ფორმატია; შესაძლოა საერთოდ არ იმუშაოს. პლატფორმა ცარიელია? ფიზიკური პულტი ხელთ გაქვს?")
             .setNegativeButton("გაუქმება",null)
             .setPositiveButton("დაწყება",(d,w)->startAutoTest()).show();
     }
@@ -189,7 +189,7 @@ public class MainActivity extends Activity {
     private void stopAutoTest(String reason) {
         if (!autoTesting) return;
         autoTesting = false;
-        autoButton.setText("🧪 ფუნქციების ავტოტესტი (12 მცდელობა)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (24 მცდელობა)");
         testResult.setText("ავტოტესტი: " + reason);
         append("AUTO TEST END: " + reason);
     }
@@ -203,8 +203,8 @@ public class MainActivity extends Activity {
             stopAutoTest("ცვლილება დაფიქსირდა! motor=" + observedMotor + " lights=" + observedLights + " speed=" + observedSpeed + ". ფიზიკურად გადაამოწმე");
             return;
         }
-        if (autoStep >= 12) {
-            stopAutoTest("12 მცდელობა დასრულდა; სტატუსში ცვლილება არ დაფიქსირდა"); return;
+        if (autoStep >= 24) {
+            stopAutoTest("24 მცდელობა დასრულდა; სტატუსში ცვლილება არ დაფიქსირდა"); return;
         }
         int function = autoStep / 4;
         UUID id = testChannels[(autoStep / 2) % 2];
@@ -213,16 +213,19 @@ public class MainActivity extends Activity {
         int lights = baselineLights;
         int speed = baselineSpeed;
         String name;
-        if (function == 0) { lights = baselineLights == 1 ? 0 : 1; name = "LIGHT"; }
-        else if (function == 1) { speed = Math.min(255,baselineSpeed + 1); name = "SPEED+1"; }
-        else { motor = 1; name = "START"; }
+        if (function == 0) { lights = 0; name = "LIGHT OFF"; }
+        else if (function == 1) { lights = 1; name = "LIGHT ON"; }
+        else if (function == 2) { speed = Math.min(255,baselineSpeed + 1); name = "SPEED+1"; }
+        else if (function == 3) { speed = Math.max(0,baselineSpeed - 1); name = "SPEED-1"; }
+        else if (function == 4) { motor = 1; name = "START"; }
+        else { motor = 0; name = "STOP"; }
         byte[] data = new byte[]{0x11,0x22,(byte)motor,(byte)lights,(byte)speed,0,0,0,1,0,(byte)0xff,0,0};
         int sum = 0;
         for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
         data[12]=(byte)sum;
         autoStep++;
-        testResult.setText("ავტოტესტი " + autoStep + "/12: " + name + " " + (id.equals(ffe2)?"FFE2":"FFE1") + (withoutResponse?" NO_RESPONSE":" WRITE"));
-        append("AUTO STEP " + autoStep + "/12 " + name + " " + id + " mode=" + (withoutResponse?"NO_RESPONSE":"WRITE") + " HEX=" + toHex(data));
+        testResult.setText("ავტოტესტი " + autoStep + "/24: " + name + " " + (id.equals(ffe2)?"FFE2":"FFE1") + (withoutResponse?" NO_RESPONSE":" WRITE"));
+        append("AUTO STEP " + autoStep + "/24 " + name + " " + id + " mode=" + (withoutResponse?"NO_RESPONSE":"WRITE") + " HEX=" + toHex(data));
         sendToMode(data,id,withoutResponse);
         handler.postDelayed(() -> { if (autoTesting) nextAutoStep(); },4000);
     }
