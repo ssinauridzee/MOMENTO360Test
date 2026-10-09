@@ -126,6 +126,71 @@ public class MainActivity extends Activity {
         autoButton.setText("🧪 ფუნქციების ავტოტესტი (24 მცდელობა)");
         controls.addView(autoButton);
         autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
+        TextView protocolTitle = new TextView(this);
+        protocolTitle.setText("ChackTok · რეალური 12-ბაიტიანი პროტოკოლი");
+        protocolTitle.setTextSize(19);
+        protocolTitle.setTextColor(Color.CYAN);
+        root.addView(protocolTitle);
+        TextView protocolHelp = new TextView(this);
+        protocolHelp.setText("AA CC SS VV 22 MM TT 11 00 KK CC AA. ChackTok-ის პროტოკოლია; 360Tok-თან თავსებადობა უცნობია. ტესტები მხოლოდ ცარიელ პლატფორმაზე.");
+        protocolHelp.setTextColor(Color.YELLOW);
+        root.addView(protocolHelp);
+        Button chackStop = new Button(this);
+        chackStop.setText("■ ChackTok STOP — ერთჯერადი ტესტი");
+        root.addView(chackStop);
+        chackStop.setOnClickListener(v -> confirmChackStop());
+        Button chackChannels = new Button(this);
+        chackChannels.setText("🧪 ChackTok STOP — არხების ტესტი");
+        root.addView(chackChannels);
+        chackChannels.setOnClickListener(v -> confirmChackChannels());
+        TextView candidateLabel = new TextView(this);
+        candidateLabel.setText("სხვა კოდის ტესტი: SS (HEX), VV (HEX), დრო წამებში");
+        candidateLabel.setTextColor(Color.WHITE);
+        root.addView(candidateLabel);
+        LinearLayout candidateRow = new LinearLayout(this);
+        candidateRow.setOrientation(LinearLayout.HORIZONTAL);
+        root.addView(candidateRow);
+        EditText candidateSwitch = new EditText(this);
+        candidateSwitch.setHint("SS");
+        candidateSwitch.setText("11");
+        candidateSwitch.setTextColor(Color.WHITE);
+        candidateSwitch.setSingleLine(true);
+        candidateSwitch.setInputType(android.text.InputType.TYPE_CLASS_TEXT);
+        candidateRow.addView(candidateSwitch,new LinearLayout.LayoutParams(0,-2,1));
+        EditText candidateSpeed = new EditText(this);
+        candidateSpeed.setHint("VV");
+        candidateSpeed.setText("11");
+        candidateSpeed.setTextColor(Color.WHITE);
+        candidateSpeed.setSingleLine(true);
+        candidateRow.addView(candidateSpeed,new LinearLayout.LayoutParams(0,-2,1));
+        EditText candidateSeconds = new EditText(this);
+        candidateSeconds.setHint("წამი");
+        candidateSeconds.setText("1");
+        candidateSeconds.setTextColor(Color.WHITE);
+        candidateSeconds.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        candidateRow.addView(candidateSeconds,new LinearLayout.LayoutParams(0,-2,1));
+        Spinner chackChannel = new Spinner(this);
+        chackChannel.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"FFE2","FFE1"}));
+        root.addView(chackChannel);
+        Button chackCandidate = new Button(this);
+        chackCandidate.setText("▶ კანდიდატის გაგზავნა (ხელით)");
+        root.addView(chackCandidate);
+        chackCandidate.setOnClickListener(v -> {
+            try {
+                int sw = Integer.parseInt(candidateSwitch.getText().toString().trim(),16);
+                int sp = Integer.parseInt(candidateSpeed.getText().toString().trim(),16);
+                int seconds = Integer.parseInt(candidateSeconds.getText().toString().trim());
+                if(sw<0 || sw>255 || sp<0 || sp>255 || seconds<1 || seconds>5) throw new IllegalArgumentException();
+                UUID target = chackChannel.getSelectedItemPosition()==0 ? ffe2 : ffe1;
+                byte[] packet = chackPacket(sw,sp,seconds);
+                new AlertDialog.Builder(this).setTitle("დაუდასტურებელი ძრავის ბრძანება")
+                    .setMessage("ამ ბრძანებამ შეიძლება ძრავა მოულოდნელად აამუშაოს. პლატფორმა ცარიელი უნდა იყოს და ფიზიკური STOP პულტი ხელთ გქონდეს.\\n\\n"+toHex(packet))
+                    .setNegativeButton("გაუქმება",null)
+                    .setPositiveButton("ერთჯერადი გაგზავნა",(d,w)->sendChack(packet,target,"MANUAL SS="+Integer.toHexString(sw),null)).show();
+            } catch(Exception e) {
+                Toast.makeText(this,"SS/VV: 00–FF HEX; დრო: 1–5 წამი",Toast.LENGTH_LONG).show();
+            }
+        });
         channel = new Spinner(this);
         channel.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"FFE1", "FFE2"}));
@@ -166,6 +231,82 @@ public class MainActivity extends Activity {
         adapter = manager.getAdapter();
         connectButton.setOnClickListener(v -> scan());
         sendButton.setOnClickListener(v -> prepareSend());
+    }
+
+    // ChackTok AppDeviceManager.BleTask.run() — reconstructed from APK.
+    // This is NOT confirmed compatible with the 360Tok controller.
+    private byte[] chackPacket(int sw,int speed,int seconds) {
+        if(seconds<0 || seconds>60) throw new IllegalArgumentException("seconds");
+        byte[] p = new byte[]{(byte)0xAA,(byte)0xCC,(byte)sw,(byte)speed,0x22,0,(byte)seconds,0x11,0,0,(byte)0xCC,(byte)0xAA};
+        int sum=0;
+        for(int i=2;i<=8;i++) sum+=p[i]; // signed Java byte addition matches original APK
+        p[9]=(byte)(sum & 0xff);
+        return p;
+    }
+
+    private void confirmChackStop() {
+        if(!chackReady()) return;
+        byte[] stop=chackPacket(0x33,0x11,0);
+        new AlertDialog.Builder(this).setTitle("ChackTok STOP ტესტი")
+            .setMessage("ChackTok-იდან აღდგენილი პაკეტი: "+toHex(stop)+"\\n\\nეს 360Tok-ის დადასტურებული STOP არ არის. გამოიყენე მხოლოდ ცარიელ პლატფორმაზე.")
+            .setNegativeButton("გაუქმება",null)
+            .setPositiveButton("FFE2-ზე გაგზავნა",(d,w)->sendChack(stop,ffe2,"CHACK STOP",null)).show();
+    }
+
+    private boolean chackReady() {
+        if(gatt==null || !bleConnected || !bleReady) {
+            Toast.makeText(this,"ჯერ დაუკავშირდი 360Tok-ს",Toast.LENGTH_LONG).show();
+            return false;
+        }
+        return true;
+    }
+
+    private boolean chackRunning=false;
+    private int chackIndex=0;
+    private final UUID[] chackTargets=new UUID[]{ffe2,ffe1};
+    private void confirmChackChannels() {
+        if(!chackReady()) return;
+        if(chackRunning) { chackRunning=false; append("CHACK CHANNEL TEST CANCELLED"); return; }
+        new AlertDialog.Builder(this).setTitle("ChackTok STOP — 4 არხის/რეჟიმის შემოწმება")
+            .setMessage("FFE2 და FFE1; WRITE და NO_RESPONSE მხოლოდ მხარდაჭერილი რეჟიმებით. ყოველი გაგზავნის შემდეგ 3 წამი. ავტომატურად არ იგზავნება START. ფიზიკური პულტი ხელთ გქონდეს.")
+            .setNegativeButton("გაუქმება",null)
+            .setPositiveButton("ტესტის დაწყება",(d,w)->{
+                chackRunning=true; chackIndex=0;
+                append("CHACK CHANNEL TEST BEGIN baseline motor="+observedMotor+" speed="+observedSpeed);
+                nextChackChannel();
+            }).show();
+    }
+
+    private void nextChackChannel() {
+        if(!chackRunning) return;
+        if(!bleConnected || !bleReady) {chackRunning=false;append("CHACK TEST: disconnected");return;}
+        if(chackIndex>=4) {chackRunning=false;append("CHACK TEST COMPLETE — check status and physical motor");return;}
+        final int step=chackIndex++;
+        UUID target=chackTargets[step/2];
+        boolean noResponse=(step%2)==1;
+        byte[] packet=chackPacket(0x33,0x11,0);
+        append("CHACK STEP "+(step+1)+"/4 "+target+" "+(noResponse?"NO_RESPONSE":"WRITE")+" "+toHex(packet));
+        sendChack(packet,target,"CHACK STOP "+(step+1),noResponse);
+        handler.postDelayed(()->{if(chackRunning) nextChackChannel();},3000);
+    }
+
+    private void sendChack(byte[] packet,UUID target,String label,Boolean forceNoResponse) {
+        if(!chackReady()) return;
+        BluetoothGattService svc=gatt.getService(serviceId);
+        BluetoothGattCharacteristic c=svc==null?null:svc.getCharacteristic(target);
+        if(c==null){append(label+" characteristic missing");return;}
+        int props=c.getProperties();
+        boolean noResponse=forceNoResponse==null
+            ? (props & BluetoothGattCharacteristic.PROPERTY_WRITE)==0
+            : forceNoResponse.booleanValue();
+        int required=noResponse?BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE:BluetoothGattCharacteristic.PROPERTY_WRITE;
+        if((props & required)==0){append(label+" unsupported write mode "+(noResponse?"NO_RESPONSE":"WRITE"));return;}
+        c.setWriteType(noResponse?BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE:BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT);
+        c.setValue(packet);
+        boolean queued=gatt.writeCharacteristic(c);
+        append(label+" TX="+toHex(packet)+" channel="+target+" mode="+(noResponse?"NO_RESPONSE":"WRITE")+" queued="+queued+
+            " motor="+observedMotor+" speed="+observedSpeed+" statusSeq="+statusSequence);
+        testResult.setText(label+" queued="+queued+" — BLE მიღება ძრავის მოქმედებას არ ადასტურებს");
     }
 
     private void confirmAutoTest() {
