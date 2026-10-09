@@ -108,6 +108,10 @@ public class MainActivity extends Activity {
         Button rfMonitor = new Button(this);
         rfMonitor.setText("📡 პულტის ბრძანებების შესწავლა");
         controls.addView(rfMonitor);
+        Button inspectButton = new Button(this);
+        inspectButton.setText("🔎 Bluetooth მოდულის მონაცემები");
+        controls.addView(inspectButton);
+        inspectButton.setOnClickListener(v -> inspectGatt());
         rfMonitor.setOnClickListener(v -> new AlertDialog.Builder(this)
             .setTitle("პულტის BLE მონიტორინგი")
             .setMessage("აპი აკვირდება პულტით გამოწვეულ ცვლილებებს. დააჭირე პულტზე თითო ღილაკს ცალ-ცალკე და ნახე ძრავის, სიჩქარისა და განათების ცვლილებები. ეს არ ნიშნავს, რომ RF კოდებს ვკითხულობთ. დიაგნოსტიკა დააკოპირე და გამომიგზავნე.")
@@ -385,8 +389,13 @@ public class MainActivity extends Activity {
                 }
                 BluetoothGattService service = g.getService(serviceId);
                 if (service == null) { append("FFE0 not found"); return; }
-                for (BluetoothGattCharacteristic c : service.getCharacteristics())
-                    append("CHAR " + c.getUuid() + " props=" + c.getProperties());
+                for (BluetoothGattService svc : g.getServices()) {
+                    append("SERVICE " + svc.getUuid());
+                    for (BluetoothGattCharacteristic c : svc.getCharacteristics()) {
+                        append("CHAR " + c.getUuid() + " props=" + c.getProperties());
+                        for (BluetoothGattDescriptor d : c.getDescriptors()) append("DESC " + d.getUuid());
+                    }
+                }
                 BluetoothGattCharacteristic notify = service.getCharacteristic(ffe1);
                 if (notify == null || (notify.getProperties() & BluetoothGattCharacteristic.PROPERTY_NOTIFY) == 0) {
                     append("NOTIFY ERROR: FFE1 notification characteristic unavailable");
@@ -450,10 +459,33 @@ public class MainActivity extends Activity {
                     duplicatePackets = 0;
                 }
             }
+            @Override public void onCharacteristicRead(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
+                append("READ " + c.getUuid() + " status=" + code + " HEX=" + toHex(c.getValue()));
+            }
             @Override public void onCharacteristicWrite(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
                 append("WRITE result=" + code + " (0 means BLE write accepted, not motor action)");
             }
         });
+    }
+
+    private void inspectGatt() {
+        if (gatt == null || !bleConnected || !bleReady) {
+            Toast.makeText(this,"ჯერ დაუკავშირდი კონტროლერს",Toast.LENGTH_LONG).show();
+            return;
+        }
+        append("GATT INSPECTION");
+        for (BluetoothGattService svc : gatt.getServices()) {
+            append("SERVICE " + svc.getUuid());
+            for (BluetoothGattCharacteristic c : svc.getCharacteristics()) {
+                append("CHAR " + c.getUuid() + " props=" + c.getProperties());
+                for (BluetoothGattDescriptor d : c.getDescriptors()) append("DESC " + d.getUuid());
+            }
+        }
+        BluetoothGattService svc = gatt.getService(serviceId);
+        BluetoothGattCharacteristic c = svc == null ? null : svc.getCharacteristic(ffe1);
+        if (c != null && (c.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) != 0) {
+            append("FFE1 READ queued=" + gatt.readCharacteristic(c));
+        } else append("FFE1 READ unsupported");
     }
 
     private void prepareSend() {
