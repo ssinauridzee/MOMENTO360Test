@@ -25,6 +25,8 @@ public class MainActivity extends Activity {
     private Spinner channel, controlChannel;
     private TextView testResult;
     private boolean scanning = false;
+    private volatile boolean bleConnected = false;
+    private volatile boolean bleReady = false;
     private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
     private String lastPacket = "";
     private int duplicatePackets = 0;
@@ -159,8 +161,7 @@ public class MainActivity extends Activity {
     }
 
     private void confirmAutoTest() {
-        if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0
-            || android.os.SystemClock.elapsedRealtime() - lastStatusAt > 6000) {
+        if (gatt == null || !bleConnected || !bleReady || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
             Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
             return;
         }
@@ -181,7 +182,7 @@ public class MainActivity extends Activity {
         baselineLights = observedLights;
         baselineSpeed = observedSpeed;
         autoButton.setText("■ ტესტის შეჩერება");
-        append("AUTO TEST START baseline motor=" + baselineMotor + " lights=" + baselineLights + " speed=" + baselineSpeed);
+        append("AUTO TEST START (connected=" + bleConnected + " ready=" + bleReady + ") baseline motor=" + baselineMotor + " lights=" + baselineLights + " speed=" + baselineSpeed);
         nextAutoStep();
     }
 
@@ -195,8 +196,8 @@ public class MainActivity extends Activity {
 
     private void nextAutoStep() {
         if (!autoTesting) return;
-        if (gatt == null || observedMotor < 0 || android.os.SystemClock.elapsedRealtime()-lastStatusAt > 6000) {
-            stopAutoTest("Bluetooth სტატუსი მიუწვდომელია"); return;
+        if (gatt == null || !bleConnected || !bleReady || observedMotor < 0) {
+            stopAutoTest("კავშირი ან საწყისი სტატუსი მიუწვდომელია"); return;
         }
         if (observedMotor != baselineMotor || observedLights != baselineLights || observedSpeed != baselineSpeed) {
             stopAutoTest("ცვლილება დაფიქსირდა! motor=" + observedMotor + " lights=" + observedLights + " speed=" + observedSpeed + ". ფიზიკურად გადაამოწმე");
@@ -230,7 +231,7 @@ public class MainActivity extends Activity {
         b.setText(title);
         parent.addView(b);
         b.setOnClickListener(v -> {
-            if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0 || android.os.SystemClock.elapsedRealtime()-lastStatusAt > 6000) {
+            if (gatt == null || !bleConnected || !bleReady || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
                 Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
                 return;
             }
@@ -306,7 +307,7 @@ public class MainActivity extends Activity {
         }
         if (scanning) return;
         sendButton.setEnabled(false);
-        if (gatt != null) { gatt.disconnect(); gatt.close(); gatt = null; }
+        if (gatt != null) { bleConnected = false; bleReady = false; gatt.disconnect(); gatt.close(); gatt = null; }
         scanner = adapter.getBluetoothLeScanner();
         if (scanner == null) { append("BLE scanner unavailable"); return; }
         scanning = true;
@@ -350,10 +351,14 @@ public class MainActivity extends Activity {
                     observedMotor = -1; observedLights = -1; observedSpeed = -1;
                     lastStatusAt = 0; statusSequence = 0;
                     runOnUiThread(() -> motorStatus.setText("ძრავის მდგომარეობა: ველოდები მონაცემებს"));
+                    bleConnected = true;
+                    bleReady = false;
                     append("CONNECTED");
                     runOnUiThread(() -> status.setText("დაკავშირებულია"));
                     g.discoverServices();
                 } else {
+                    bleConnected = false;
+                    bleReady = false;
                     append("Disconnected: " + code);
                     runOnUiThread(() -> { if (autoTesting) stopAutoTest("კავშირი გაწყდა"); });
                     runOnUiThread(() -> {
@@ -384,6 +389,7 @@ public class MainActivity extends Activity {
                         g.writeDescriptor(descriptor);
                     }
                 }
+                bleReady = true;
                 runOnUiThread(() -> {
                     sendButton.setEnabled(true);
                     append("READY");
