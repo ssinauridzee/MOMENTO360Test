@@ -196,6 +196,20 @@ public class MainActivity extends Activity {
                 Toast.makeText(this,"SS/VV: 00–FF HEX; დრო: 1–5 წამი",Toast.LENGTH_LONG).show();
             }
         });
+        Button classicInfo = new Button(this);
+        classicInfo.setText("🔍 Classic/SPP დიაგნოსტიკა");
+        root.addView(classicInfo);
+        classicInfo.setOnClickListener(v -> inspectClassic());
+        Button shareDiagnostics = new Button(this);
+        shareDiagnostics.setText("📤 დიაგნოსტიკის გაზიარება");
+        root.addView(shareDiagnostics);
+        shareDiagnostics.setOnClickListener(v -> {
+            android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_SEND);
+            intent.setType("text/plain");
+            intent.putExtra(android.content.Intent.EXTRA_SUBJECT,"MOMENTO 360 BLE diagnostics");
+            intent.putExtra(android.content.Intent.EXTRA_TEXT,diagnosticLog.toString());
+            startActivity(android.content.Intent.createChooser(intent,"დიაგნოსტიკის გაგზავნა"));
+        });
         channel = new Spinner(this);
         channel.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"FFE1", "FFE2"}));
@@ -315,6 +329,23 @@ public class MainActivity extends Activity {
         append(label+" TX="+toHex(packet)+" channel="+target+" mode="+(noResponse?"NO_RESPONSE":"WRITE")+" queued="+queued+
             " motor="+observedMotor+" speed="+observedSpeed+" statusSeq="+statusSequence);
         testResult.setText(label+" queued="+queued+" — BLE მიღება ძრავის მოქმედებას არ ადასტურებს");
+    }
+
+    private void inspectClassic() {
+        if(!permitted()) return;
+        if(adapter==null || !adapter.isEnabled()){append("CLASSIC: Bluetooth disabled");return;}
+        append("CLASSIC: Android bonded devices and cached UUIDs; not an active SPP scan");
+        try {
+            java.util.Set<BluetoothDevice> paired=adapter.getBondedDevices();
+            append("CLASSIC bonded count="+paired.size());
+            for(BluetoothDevice d:paired) {
+                append("CLASSIC DEVICE name="+d.getName()+" address="+d.getAddress()+" type="+d.getType());
+                android.os.ParcelUuid[] uuids=d.getUuids();
+                if(uuids==null){append("CLASSIC UUIDS unavailable (not proof of no SPP)");continue;}
+                for(android.os.ParcelUuid u:uuids) append("CLASSIC UUID "+u.getUuid());
+            }
+            append("CLASSIC NOTE: absence from bonded list does not rule out Bluetooth Classic/SPP.");
+        }catch(SecurityException e){append("CLASSIC permission error: "+e.getMessage());}
     }
 
     private void confirmAutoTest() {
