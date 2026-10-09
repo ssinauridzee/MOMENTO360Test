@@ -143,6 +143,10 @@ public class MainActivity extends Activity {
         chackChannels.setText("🧪 ChackTok STOP — არხების ტესტი");
         root.addView(chackChannels);
         chackChannels.setOnClickListener(v -> confirmChackChannels());
+        Button cancelTests = new Button(this);
+        cancelTests.setText("■ ყველა ტესტის შეჩერება");
+        root.addView(cancelTests);
+        cancelTests.setOnClickListener(v -> { chackRunning=false; stopAutoTest("მომხმარებელმა შეაჩერა"); append("ALL TESTS CANCELLED"); });
         TextView candidateLabel = new TextView(this);
         candidateLabel.setText("სხვა კოდის ტესტი: SS (HEX), VV (HEX), დრო წამებში");
         candidateLabel.setTextColor(Color.WHITE);
@@ -176,6 +180,7 @@ public class MainActivity extends Activity {
         chackCandidate.setText("▶ კანდიდატის გაგზავნა (ხელით)");
         root.addView(chackCandidate);
         chackCandidate.setOnClickListener(v -> {
+            if(commandBusy()) { Toast.makeText(this,"მიმდინარე ტესტის დროს ხელით გაგზავნა დაბლოკილია",Toast.LENGTH_LONG).show(); return; }
             try {
                 int sw = Integer.parseInt(candidateSwitch.getText().toString().trim(),16);
                 int sp = Integer.parseInt(candidateSpeed.getText().toString().trim(),16);
@@ -246,6 +251,7 @@ public class MainActivity extends Activity {
 
     private void confirmChackStop() {
         if(!chackReady()) return;
+        if(commandBusy()) { Toast.makeText(this,"ჯერ მიმდინარე ტესტი შეაჩერე",Toast.LENGTH_LONG).show(); return; }
         byte[] stop=chackPacket(0x33,0x11,0);
         new AlertDialog.Builder(this).setTitle("ChackTok STOP ტესტი")
             .setMessage("ChackTok-იდან აღდგენილი პაკეტი: "+toHex(stop)+"\\n\\nეს 360Tok-ის დადასტურებული STOP არ არის. გამოიყენე მხოლოდ ცარიელ პლატფორმაზე.")
@@ -262,11 +268,13 @@ public class MainActivity extends Activity {
     }
 
     private boolean chackRunning=false;
+    private boolean commandBusy() { return chackRunning || autoTesting; }
     private int chackIndex=0;
     private final UUID[] chackTargets=new UUID[]{ffe2,ffe1};
     private void confirmChackChannels() {
         if(!chackReady()) return;
         if(chackRunning) { chackRunning=false; append("CHACK CHANNEL TEST CANCELLED"); return; }
+        if(autoTesting) { Toast.makeText(this,"ჯერ ავტოტესტი შეაჩერე",Toast.LENGTH_LONG).show(); return; }
         new AlertDialog.Builder(this).setTitle("ChackTok STOP — 4 არხის/რეჟიმის შემოწმება")
             .setMessage("FFE2 და FFE1; WRITE და NO_RESPONSE მხოლოდ მხარდაჭერილი რეჟიმებით. ყოველი გაგზავნის შემდეგ 3 წამი. ავტომატურად არ იგზავნება START. ფიზიკური პულტი ხელთ გქონდეს.")
             .setNegativeButton("გაუქმება",null)
@@ -310,6 +318,7 @@ public class MainActivity extends Activity {
     }
 
     private void confirmAutoTest() {
+        if(chackRunning) { Toast.makeText(this,"ჯერ ChackTok ტესტი დაასრულე",Toast.LENGTH_LONG).show(); return; }
         if (gatt == null || !bleConnected || !bleReady || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
             Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
             return;
@@ -384,6 +393,7 @@ public class MainActivity extends Activity {
         b.setText(title);
         parent.addView(b);
         b.setOnClickListener(v -> {
+            if(commandBusy()) { Toast.makeText(this,"ჯერ მიმდინარე ტესტი შეაჩერე",Toast.LENGTH_LONG).show(); return; }
             if (gatt == null || !bleConnected || !bleReady || observedMotor < 0 || observedLights < 0 || observedSpeed < 0) {
                 Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
                 return;
@@ -673,6 +683,7 @@ public class MainActivity extends Activity {
     }
 
     private void prepareSend() {
+        if(commandBusy()) { Toast.makeText(this,"ჯერ მიმდინარე ტესტი შეაჩერე",Toast.LENGTH_LONG).show(); return; }
         String hex = command.getText().toString().replaceAll("[\\s,:-]","");
         if (hex.length() == 0 || hex.length() % 2 != 0 || !hex.matches("[0-9a-fA-F]+")) {
             Toast.makeText(this,"შეიყვანე სწორი HEX ბრძანება",Toast.LENGTH_LONG).show();
