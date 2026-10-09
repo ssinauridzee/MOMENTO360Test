@@ -26,6 +26,9 @@ public class MainActivity extends Activity {
     private TextView testResult;
     private boolean scanning = false;
     private boolean notificationSubscribed = false;
+    private final java.util.ArrayList<BluetoothGattCharacteristic> infoReadQueue = new java.util.ArrayList<>();
+    private boolean infoReading = false;
+    private final UUID deviceInfoId = UUID.fromString("0000180a-0000-1000-8000-00805f9b34fb");
     private volatile boolean bleConnected = false;
     private volatile boolean bleReady = false;
     private int observedMotor = -1, observedLights = -1, observedSpeed = -1;
@@ -109,7 +112,7 @@ public class MainActivity extends Activity {
         rfMonitor.setText("📡 პულტის ბრძანებების შესწავლა");
         controls.addView(rfMonitor);
         Button inspectButton = new Button(this);
-        inspectButton.setText("🔎 Bluetooth მოდულის მონაცემები");
+        inspectButton.setText("🔎 მწარმოებლისა და Firmware-ის წაკითხვა");
         controls.addView(inspectButton);
         inspectButton.setOnClickListener(v -> inspectGatt());
         rfMonitor.setOnClickListener(v -> new AlertDialog.Builder(this)
@@ -370,6 +373,8 @@ public class MainActivity extends Activity {
                     bleConnected = false;
                     bleReady = false;
                     notificationSubscribed = false;
+                    infoReading = false;
+                    infoReadQueue.clear();
                     append("Disconnected: " + code);
                     runOnUiThread(() -> { if (autoTesting) stopAutoTest("კავშირი გაწყდა"); });
                     runOnUiThread(() -> {
@@ -460,7 +465,14 @@ public class MainActivity extends Activity {
                 }
             }
             @Override public void onCharacteristicRead(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
-                append("READ " + c.getUuid() + " status=" + code + " HEX=" + toHex(c.getValue()));
+                byte[] value = c.getValue();
+                append("INFO READ " + c.getUuid() + " status=" + code + " HEX=" + toHex(value));
+                if (code == BluetoothGatt.GATT_SUCCESS && value != null) {
+                    String label = infoLabel(c.getUuid());
+                    String decoded = new String(value, java.nio.charset.StandardCharsets.UTF_8).replaceAll("[\\p{Cntrl}&&[^\\n\\t]]", "");
+                    append("INFO " + label + " = " + decoded);
+                }
+                handler.post(() -> readNextInfo());
             }
             @Override public void onCharacteristicWrite(BluetoothGatt g,BluetoothGattCharacteristic c,int code) {
                 append("WRITE result=" + code + " (0 means BLE write accepted, not motor action)");
@@ -468,24 +480,55 @@ public class MainActivity extends Activity {
         });
     }
 
+    private String infoLabel(UUID id) {
+        String shortId = id.toString().substring(4,8).toUpperCase(java.util.Locale.US);
+        switch (shortId) {
+            case "2A29": return "მწარმოებელი";
+            case "2A24": return "მოდელი";
+            case "2A25": return "სერიული ნომერი";
+            case "2A26": return "Firmware";
+            case "2A27": return "Hardware";
+            case "2A28": return "Software";
+            case "2A23": return "System ID (binary)";
+            case "2A2A": return "IEEE ID";
+            case "2A50": return "PnP ID (binary)";
+            default: return shortId;
+        }
+    }
+
     private void inspectGatt() {
         if (gatt == null || !bleConnected || !bleReady) {
             Toast.makeText(this,"ჯერ დაუკავშირდი კონტროლერს",Toast.LENGTH_LONG).show();
             return;
         }
-        append("GATT INSPECTION");
-        for (BluetoothGattService svc : gatt.getServices()) {
-            append("SERVICE " + svc.getUuid());
-            for (BluetoothGattCharacteristic c : svc.getCharacteristics()) {
-                append("CHAR " + c.getUuid() + " props=" + c.getProperties());
-                for (BluetoothGattDescriptor d : c.getDescriptors()) append("DESC " + d.getUuid());
+        if (infoReading) {
+            Toast.makeText(this,"ინფორმაციის წაკითხვა მიმდინარეობს",Toast.LENGTH_SHORT).show();
+            return;
+        }
+        BluetoothGattService service = gatt.getService(deviceInfoId);
+        if (service == null) { append("INFO: Device Information (180A) unavailable"); return; }
+        infoReadQueue.clear();
+        for (BluetoothGattCharacteristic c : service.getCharacteristics()) {
+            if ((c.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) != 0) {
+                infoReadQueue.add(c);
             }
         }
-        BluetoothGattService svc = gatt.getService(serviceId);
-        BluetoothGattCharacteristic c = svc == null ? null : svc.getCharacteristic(ffe1);
-        if (c != null && (c.getProperties() & BluetoothGattCharacteristic.PROPERTY_READ) != 0) {
-            append("FFE1 READ queued=" + gatt.readCharacteristic(c));
-        } else append("FFE1 READ unsupported");
+        append("INFO SCAN: " + infoReadQueue.size() + " readable characteristics");
+        infoReading = true;
+        readNextInfo();
+    }
+
+    private void readNextInfo() {
+        if (!infoReading) return;
+        if (gatt == null || !bleConnected || infoReadQueue.isEmpty()) {
+            infoReading = false;
+            append("INFO SCAN COMPLETE — დააკოპირე დიაგნოსტიკა");
+            return;
+        }
+        BluetoothGattCharacteristic next = infoReadQueue.remove(0);
+        boolean queued = gatt.readCharacteristic(next);
+        append("INFO REQUEST " + infoLabel(next.getUuid()) + " queued=" + queued);
+        if (!queued) handler.postDelayed(() -> readNextInfo(), 200);
     }
 
     private void prepareSend() {
