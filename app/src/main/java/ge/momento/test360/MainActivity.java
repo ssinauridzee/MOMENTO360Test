@@ -33,13 +33,14 @@ public class MainActivity extends Activity {
     private int statusSequence = 0;
     private boolean autoTesting = false;
     private int autoStep = 0;
+    private int baselineMotor, baselineLights, baselineSpeed;
     private Button autoButton;
-    private final UUID[] testChannels = new UUID[]{ffe2,ffe1};
     private final StringBuilder diagnosticLog = new StringBuilder();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final UUID serviceId = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
     private final UUID ffe1 = UUID.fromString("0000ffe1-0000-1000-8000-00805f9b34fb");
     private final UUID ffe2 = UUID.fromString("0000ffe2-0000-1000-8000-00805f9b34fb");
+    private final UUID[] testChannels = new UUID[]{ffe2,ffe1};
     private final UUID cccd = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     @Override public void onCreate(Bundle saved) {
@@ -112,7 +113,7 @@ public class MainActivity extends Activity {
         testResult.setTextSize(17);
         controls.addView(testResult);
         autoButton = new Button(this);
-        autoButton.setText("🧪 ავტომატური START ტესტი (2 არხი)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (6 მცდელობა)");
         controls.addView(autoButton);
         autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
         channel = new Spinner(this);
@@ -160,15 +161,15 @@ public class MainActivity extends Activity {
     private void confirmAutoTest() {
         if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0
             || android.os.SystemClock.elapsedRealtime() - lastStatusAt > 6000) {
-            Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე ახალ სტატუსს",Toast.LENGTH_LONG).show();
+            Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე სტატუსს",Toast.LENGTH_LONG).show();
             return;
         }
         if (observedMotor != 0) {
-            Toast.makeText(this,"ტესტამდე ძრავა პულტით გააჩერე",Toast.LENGTH_LONG).show();
+            Toast.makeText(this,"ჯერ ძრავა პულტით გააჩერე",Toast.LENGTH_LONG).show();
             return;
         }
-        new AlertDialog.Builder(this).setTitle("ავტომატური ტესტი — 2 არხი")
-            .setMessage("ტესტი მხოლოდ ადრე გამოყენებულ 13-ბაიტიან პაკეტს შეამოწმებს FFE2 და FFE1 არხებზე, 4-წამიანი ინტერვალით. ეს ბრძანება დაუდასტურებელია. პლატფორმა ცარიელი უნდა იყოს, პულტი ხელთ გქონდეს და STOP ღილაკისთვის მზად იყავი. უცნობმა ბრძანებამ შეიძლება მოძრაობა გამოიწვიოს. გაგრძელება?")
+        new AlertDialog.Builder(this).setTitle("ფუნქციების ავტომატური ტესტი")
+            .setMessage("6 მცდელობა: განათების შეცვლა, სიჩქარის +1 ცვლილება და START, თითოეული FFE2/FFE1 არხზე. 4 წამი თითო მცდელობას შორის. ეს მხოლოდ ჰიპოთეზური 13-ბაიტიანი ფორმატია; შესაძლოა საერთოდ არ იმუშაოს. პლატფორმა ცარიელია? ფიზიკური პულტი ხელთ გაქვს?")
             .setNegativeButton("გაუქმება",null)
             .setPositiveButton("დაწყება",(d,w)->startAutoTest()).show();
     }
@@ -176,14 +177,18 @@ public class MainActivity extends Activity {
     private void startAutoTest() {
         autoTesting = true;
         autoStep = 0;
+        baselineMotor = observedMotor;
+        baselineLights = observedLights;
+        baselineSpeed = observedSpeed;
         autoButton.setText("■ ტესტის შეჩერება");
-        append("AUTO TEST START: known candidate only, FFE2 then FFE1");
+        append("AUTO TEST START baseline motor=" + baselineMotor + " lights=" + baselineLights + " speed=" + baselineSpeed);
         nextAutoStep();
     }
 
     private void stopAutoTest(String reason) {
+        if (!autoTesting) return;
         autoTesting = false;
-        autoButton.setText("🧪 ავტომატური START ტესტი (2 არხი)");
+        autoButton.setText("🧪 ფუნქციების ავტოტესტი (6 მცდელობა)");
         testResult.setText("ავტოტესტი: " + reason);
         append("AUTO TEST END: " + reason);
     }
@@ -193,28 +198,31 @@ public class MainActivity extends Activity {
         if (gatt == null || observedMotor < 0 || android.os.SystemClock.elapsedRealtime()-lastStatusAt > 6000) {
             stopAutoTest("Bluetooth სტატუსი მიუწვდომელია"); return;
         }
-        if (observedMotor == 1) {
-            stopAutoTest("ძრავის ჩართვა დაფიქსირდა! გააჩერე პულტით და გადაამოწმე."); return;
+        if (observedMotor != baselineMotor || observedLights != baselineLights || observedSpeed != baselineSpeed) {
+            stopAutoTest("ცვლილება დაფიქსირდა! motor=" + observedMotor + " lights=" + observedLights + " speed=" + observedSpeed + ". ფიზიკურად გადაამოწმე");
+            return;
         }
-        if (autoStep >= testChannels.length) {
-            stopAutoTest("ორივე არხი შემოწმდა; ჩართვა არ დაფიქსირდა"); return;
+        if (autoStep >= 6) {
+            stopAutoTest("6 მცდელობა დასრულდა; სტატუსში ცვლილება არ დაფიქსირდა"); return;
         }
-        UUID id = testChannels[autoStep++];
-        byte[] data = new byte[]{0x11,0x22,1,(byte)observedLights,(byte)observedSpeed,0,0,0,1,0,(byte)0xff,0,0};
+        int function = autoStep / 2;
+        UUID id = testChannels[autoStep % 2];
+        int motor = baselineMotor;
+        int lights = baselineLights;
+        int speed = baselineSpeed;
+        String name;
+        if (function == 0) { lights = baselineLights == 1 ? 0 : 1; name = "LIGHT"; }
+        else if (function == 1) { speed = Math.min(255,baselineSpeed + 1); name = "SPEED+1"; }
+        else { motor = 1; name = "START"; }
+        byte[] data = new byte[]{0x11,0x22,(byte)motor,(byte)lights,(byte)speed,0,0,0,1,0,(byte)0xff,0,0};
         int sum = 0;
         for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
         data[12]=(byte)sum;
-        testResult.setText("ავტოტესტი " + autoStep + "/2: " + (id.equals(ffe2)?"FFE2":"FFE1"));
-        append("AUTO STEP " + autoStep + "/2 " + id + " HEX=" + toHex(data));
+        autoStep++;
+        testResult.setText("ავტოტესტი " + autoStep + "/6: " + name + " " + (id.equals(ffe2)?"FFE2":"FFE1"));
+        append("AUTO STEP " + autoStep + "/6 " + name + " " + id + " HEX=" + toHex(data));
         sendTo(data,id);
-        handler.postDelayed(() -> {
-            if (!autoTesting) return;
-            if (observedMotor == 1) {
-                stopAutoTest("ძრავის ჩართვა დაფიქსირდა; ფიზიკურად გადაამოწმე და პულტით გააჩერე");
-                return;
-            }
-            nextAutoStep();
-        },4000);
+        handler.postDelayed(() -> { if (autoTesting) nextAutoStep(); },4000);
     }
 
     private void addControl(LinearLayout parent, String title, int action, int value) {
@@ -401,7 +409,7 @@ public class MainActivity extends Activity {
                             observedMotor=motor;
                             observedLights=lights;
                             observedSpeed=speed;
-                            if (autoTesting && motor == 1) runOnUiThread(() -> stopAutoTest("ძრავის ჩართვა დაფიქსირდა; გააჩერე პულტით"));
+                            if (autoTesting && (motor != baselineMotor || lights != baselineLights || speed != baselineSpeed)) runOnUiThread(() -> stopAutoTest("სტატუსის ცვლილება დაფიქსირდა! ფიზიკურად გადაამოწმე; საჭიროებისას პულტით გააჩერე"));
                             lastStatusAt=android.os.SystemClock.elapsedRealtime();
                             statusSequence++;
                             runOnUiThread(() -> {
