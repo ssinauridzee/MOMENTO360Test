@@ -126,6 +126,26 @@ public class MainActivity extends Activity {
         autoButton.setText("🧪 ფუნქციების ავტოტესტი (24 მცდელობა)");
         controls.addView(autoButton);
         autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
+        TextView boothTitle = new TextView(this);
+        boothTitle.setText("360BoothX · 7-ბაიტიანი ბრძანებების ტესტი");
+        boothTitle.setTextSize(19);
+        boothTitle.setTextColor(Color.CYAN);
+        root.addView(boothTitle);
+        TextView boothHint = new TextView(this);
+        boothHint.setText("360BoothX იყენებს FFF0/FFF3-ს, მაგრამ 360Tok-ზე მხოლოდ FFE0/FFE1/FFE2 ჩანს. თავსებადობა დაუდასტურებელია. ჯერ STOP გამოსცადე ცარიელ პლატფორმაზე.");
+        boothHint.setTextColor(Color.YELLOW);
+        root.addView(boothHint);
+        Spinner boothChannel = new Spinner(this);
+        boothChannel.setAdapter(new ArrayAdapter<String>(this,android.R.layout.simple_spinner_dropdown_item,new String[]{"FFE2 — WRITE","FFE1 — WRITE"}));
+        root.addView(boothChannel);
+        Button boothStop = new Button(this);
+        boothStop.setText("■ 360BoothX STOP — 43 B0 00 00 00 00 F3");
+        root.addView(boothStop);
+        boothStop.setOnClickListener(v -> confirmBoothCommand(false,boothChannel.getSelectedItemPosition()));
+        Button boothStart = new Button(this);
+        boothStart.setText("▶ 360BoothX START — 43 B0 01 00 00 00 F4");
+        root.addView(boothStart);
+        boothStart.setOnClickListener(v -> confirmBoothCommand(true,boothChannel.getSelectedItemPosition()));
         TextView protocolTitle = new TextView(this);
         protocolTitle.setText("ChackTok · რეალური 12-ბაიტიანი პროტოკოლი");
         protocolTitle.setTextSize(19);
@@ -250,6 +270,30 @@ public class MainActivity extends Activity {
         adapter = manager.getAdapter();
         connectButton.setOnClickListener(v -> scan());
         sendButton.setOnClickListener(v -> prepareSend());
+    }
+
+    private void confirmBoothCommand(boolean start,int channelIndex) {
+        if(!chackReady()) return;
+        if(commandBusy() || infoReading) {
+            Toast.makeText(this,"ჯერ მიმდინარე ტესტი ან წაკითხვა დაასრულე",Toast.LENGTH_LONG).show();
+            return;
+        }
+        final UUID target=channelIndex==0?ffe2:ffe1;
+        final byte[] packet=new byte[]{0x43,(byte)0xB0,(byte)(start?1:0),0,0,0,(byte)(start?0xF4:0xF3)};
+        final int initialMotor=observedMotor;
+        new AlertDialog.Builder(this)
+            .setTitle(start?"360BoothX START — საფრთხილის დადასტურება":"360BoothX STOP — საცდელი ბრძანება")
+            .setMessage("ეს პაკეტი ამოღებულია 360BoothX აპლიკაციიდან და არა 360Tok-ის firmware-დან. შესაძლოა არ იმუშაოს ან მოულოდნელი რეაქცია გამოიწვიოს.\\n\\nპლატფორმა სრულად ცარიელი უნდა იყოს, ფიზიკური STOP პულტი ხელთ გქონდეს.\\n\\nარხი: "+target+"\\nHEX: "+toHex(packet)+"\\nამჟამინდელი ძრავის სტატუსი: "+initialMotor)
+            .setNegativeButton("გაუქმება",null)
+            .setPositiveButton("ერთჯერადი გაგზავნა",(dialog,which)->{
+                if(!chackReady() || commandBusy()) return;
+                BluetoothGattService svc=gatt.getService(serviceId);
+                BluetoothGattCharacteristic characteristic=svc==null?null:svc.getCharacteristic(target);
+                if(characteristic==null){append("BOOTH: characteristic missing "+target);return;}
+                append("BOOTH "+(start?"START":"STOP")+" TX="+toHex(packet)+" channel="+target+" baselineMotor="+observedMotor);
+                writeToCharacteristic(characteristic,packet,target);
+                handler.postDelayed(()->append("BOOTH CHECK "+(start?"START":"STOP")+" motor="+observedMotor+" (before="+initialMotor+"); verify physical movement. WRITE success alone is not proof."),2500);
+            }).show();
     }
 
     // ChackTok AppDeviceManager.BleTask.run() — reconstructed from APK.
