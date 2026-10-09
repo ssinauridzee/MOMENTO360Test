@@ -31,6 +31,10 @@ public class MainActivity extends Activity {
     private int packetCount = 0;
     private long lastStatusAt = 0;
     private int statusSequence = 0;
+    private boolean autoTesting = false;
+    private int autoStep = 0;
+    private Button autoButton;
+    private final UUID[] testChannels = new UUID[]{ffe2,ffe1};
     private final StringBuilder diagnosticLog = new StringBuilder();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final UUID serviceId = UUID.fromString("0000ffe0-0000-1000-8000-00805f9b34fb");
@@ -107,6 +111,10 @@ public class MainActivity extends Activity {
         testResult.setTextColor(Color.YELLOW);
         testResult.setTextSize(17);
         controls.addView(testResult);
+        autoButton = new Button(this);
+        autoButton.setText("🧪 ავტომატური START ტესტი (2 არხი)");
+        controls.addView(autoButton);
+        autoButton.setOnClickListener(v -> { if (autoTesting) stopAutoTest("შეჩერებულია მომხმარებლის მიერ"); else confirmAutoTest(); });
         channel = new Spinner(this);
         channel.setAdapter(new ArrayAdapter<String>(this, android.R.layout.simple_spinner_dropdown_item,
             new String[]{"FFE1", "FFE2"}));
@@ -147,6 +155,66 @@ public class MainActivity extends Activity {
         adapter = manager.getAdapter();
         connectButton.setOnClickListener(v -> scan());
         sendButton.setOnClickListener(v -> prepareSend());
+    }
+
+    private void confirmAutoTest() {
+        if (gatt == null || observedMotor < 0 || observedLights < 0 || observedSpeed < 0
+            || android.os.SystemClock.elapsedRealtime() - lastStatusAt > 6000) {
+            Toast.makeText(this,"ჯერ დაუკავშირდი და დაელოდე ახალ სტატუსს",Toast.LENGTH_LONG).show();
+            return;
+        }
+        if (observedMotor != 0) {
+            Toast.makeText(this,"ტესტამდე ძრავა პულტით გააჩერე",Toast.LENGTH_LONG).show();
+            return;
+        }
+        new AlertDialog.Builder(this).setTitle("ავტომატური ტესტი — 2 არხი")
+            .setMessage("ტესტი მხოლოდ ადრე გამოყენებულ 13-ბაიტიან პაკეტს შეამოწმებს FFE2 და FFE1 არხებზე, 4-წამიანი ინტერვალით. ეს ბრძანება დაუდასტურებელია. პლატფორმა ცარიელი უნდა იყოს, პულტი ხელთ გქონდეს და STOP ღილაკისთვის მზად იყავი. უცნობმა ბრძანებამ შეიძლება მოძრაობა გამოიწვიოს. გაგრძელება?")
+            .setNegativeButton("გაუქმება",null)
+            .setPositiveButton("დაწყება",(d,w)->startAutoTest()).show();
+    }
+
+    private void startAutoTest() {
+        autoTesting = true;
+        autoStep = 0;
+        autoButton.setText("■ ტესტის შეჩერება");
+        append("AUTO TEST START: known candidate only, FFE2 then FFE1");
+        nextAutoStep();
+    }
+
+    private void stopAutoTest(String reason) {
+        autoTesting = false;
+        autoButton.setText("🧪 ავტომატური START ტესტი (2 არხი)");
+        testResult.setText("ავტოტესტი: " + reason);
+        append("AUTO TEST END: " + reason);
+    }
+
+    private void nextAutoStep() {
+        if (!autoTesting) return;
+        if (gatt == null || observedMotor < 0 || android.os.SystemClock.elapsedRealtime()-lastStatusAt > 6000) {
+            stopAutoTest("Bluetooth სტატუსი მიუწვდომელია"); return;
+        }
+        if (observedMotor == 1) {
+            stopAutoTest("ძრავის ჩართვა დაფიქსირდა! გააჩერე პულტით და გადაამოწმე."); return;
+        }
+        if (autoStep >= testChannels.length) {
+            stopAutoTest("ორივე არხი შემოწმდა; ჩართვა არ დაფიქსირდა"); return;
+        }
+        UUID id = testChannels[autoStep++];
+        byte[] data = new byte[]{0x11,0x22,1,(byte)observedLights,(byte)observedSpeed,0,0,0,1,0,(byte)0xff,0,0};
+        int sum = 0;
+        for (int i=0;i<12;i++) sum=(sum+(data[i]&255))&255;
+        data[12]=(byte)sum;
+        testResult.setText("ავტოტესტი " + autoStep + "/2: " + (id.equals(ffe2)?"FFE2":"FFE1"));
+        append("AUTO STEP " + autoStep + "/2 " + id + " HEX=" + toHex(data));
+        sendTo(data,id);
+        handler.postDelayed(() -> {
+            if (!autoTesting) return;
+            if (observedMotor == 1) {
+                stopAutoTest("ძრავის ჩართვა დაფიქსირდა; ფიზიკურად გადაამოწმე და პულტით გააჩერე");
+                return;
+            }
+            nextAutoStep();
+        },4000);
     }
 
     private void addControl(LinearLayout parent, String title, int action, int value) {
@@ -279,6 +347,7 @@ public class MainActivity extends Activity {
                     g.discoverServices();
                 } else {
                     append("Disconnected: " + code);
+                    runOnUiThread(() -> { if (autoTesting) stopAutoTest("კავშირი გაწყდა"); });
                     runOnUiThread(() -> {
                         status.setText("კავშირი გათიშულია");
                         sendButton.setEnabled(false);
@@ -332,6 +401,7 @@ public class MainActivity extends Activity {
                             observedMotor=motor;
                             observedLights=lights;
                             observedSpeed=speed;
+                            if (autoTesting && motor == 1) runOnUiThread(() -> stopAutoTest("ძრავის ჩართვა დაფიქსირდა; გააჩერე პულტით"));
                             lastStatusAt=android.os.SystemClock.elapsedRealtime();
                             statusSequence++;
                             runOnUiThread(() -> {
