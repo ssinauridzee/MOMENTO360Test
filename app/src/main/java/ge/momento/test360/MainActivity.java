@@ -41,141 +41,255 @@ public class MainActivity extends Activity {
     private boolean experimentalAcknowledged=false, brightnessAcknowledged=false;
     private TextView speedSelected, durationLabel;
     private LinearLayout logContainer;
+    private TextView modeText;
+    private Runnable pendingStart;
 
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setStatusBarColor(0xff090E1C);
-        getWindow().setNavigationBarColor(0xff090E1C);
-        ScrollView scroll=new ScrollView(this);scroll.setBackgroundColor(0xff090E1C);
+        getWindow().setStatusBarColor(0xff080e19);
+        getWindow().setNavigationBarColor(0xff080e19);
+        ScrollView scroll=new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(0xff080e19);
         LinearLayout root=new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(16),dp(16),dp(16),dp(28));
-        scroll.addView(root);setContentView(scroll);
+        root.setPadding(dp(18),dp(24),dp(18),dp(32));
+        scroll.addView(root);
+        setContentView(scroll);
 
         LinearLayout header=row();
-        header.setPadding(dp(17),dp(14),dp(16),dp(14));
-        header.setBackground(grad(0xff156D83,0xff3E275F,21));
-        TextView icon=text("M",27,Color.WHITE);
-        icon.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        icon.setGravity(Gravity.CENTER);
-        icon.setBackground(grad(0xff28C1B2,0xff795BE0,17));
-        header.addView(icon,size(54,54));
-        LinearLayout identity=new LinearLayout(this);
-        identity.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(0,-2,1);ip.leftMargin=dp(13);
-        header.addView(identity,ip);
-        TextView brand=text("MOMENTO 360",23,Color.WHITE);brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        identity.addView(brand);
-        identity.addView(text("CONTROL STUDIO  •  BLE",11,0xff71E4E2));
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView mark=text("M",23,Color.WHITE);
+        mark.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        mark.setGravity(Gravity.CENTER);
+        mark.setBackground(grad(0xff00D6C2,0xff4979DD,18));
+        header.addView(mark,size(50,50));
+        LinearLayout brand=new LinearLayout(this);
+        brand.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams brp=new LinearLayout.LayoutParams(0,-2,1);
+        brp.leftMargin=dp(12);
+        header.addView(brand,brp);
+        TextView logoText=text("MOMENTO 360",23,Color.WHITE);
+        logoText.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        brand.addView(logoText);
+        brand.addView(text("360 PHOTO BOOTH  •  CONTROL",11,0xff8A9CB4));
         root.addView(header);
-        connectionView=text("●  OFFLINE • 360Tok კონტროლერი",14,0xff87D7D5);
-        root.addView(connectionView,top(-1,-2,12));
 
-        LinearLayout pair=row();root.addView(pair,top(-1,-2,6));
-        Button connect=button(pair,"◉  დაკავშირება");weight(connect,8);
-        connect.setBackground(bg(0xff205973,14));connect.setOnClickListener(v->requestOrScan());
-        Button disconnect=button(pair,"გათიშვა");weight(disconnect,0);
+        LinearLayout conn=card(root,0xff111D2D,15);
+        conn.setPadding(dp(16),dp(11),dp(16),dp(11));
+        LinearLayout connTop=row();
+        conn.addView(connTop);
+        connectionView=text("●  გათიშულია",14,0xff8CA5BC);
+        connTop.addView(connectionView,new LinearLayout.LayoutParams(0,-2,1));
+        Button connect=compactButton("დაკავშირება",0xff164A54);
+        connTop.addView(connect,size(118,43));
+        connect.setOnClickListener(v->requestOrScan());
+        Button disconnect=compactButton("✕",0xff22314B);
+        LinearLayout.LayoutParams disc=size(44,43);disc.leftMargin=dp(7);
+        connTop.addView(disconnect,disc);
         disconnect.setOnClickListener(v->disconnect());
 
-        LinearLayout motorPanel=panel(root,"ძრავის მართვა","ცალკე START და STOP • კონტროლერის სტატუსით");
-        motorView=text("ძრავა: უცნობია",16,0xff72EAD8);
-        motorPanel.addView(motorView,top(-1,-2,10));
-        LinearLayout actionRow=row();motorPanel.addView(actionRow,top(-1,-2,12));
-        Button startMotor=button(actionRow,"▶  START");weight(startMotor,8);
-        startMotor.setTextSize(18);startMotor.setBackground(grad(0xff0EC39A,0xff117A83,15));
-        startMotor.setOnClickListener(v->sendPacket(1,1,"MOTOR START"));
-        Button stopMotor=button(actionRow,"■  STOP");weight(stopMotor,0);
-        stopMotor.setTextSize(18);stopMotor.setBackground(grad(0xffC85D77,0xff8E4369,15));
-        stopMotor.setOnClickListener(v->sendPacket(1,0,"MOTOR STOP"));
-        motorPanel.addView(text("მიმართულების შეცვლა",14,Color.WHITE),top(-1,-2,16));
-        LinearLayout dir=row();motorPanel.addView(dir,top(-1,-2,8));
-        Button directionA=button(dir,"↺  მიმართულება A");weight(directionA,8);
-        directionA.setOnClickListener(v->sendPacket(3,0,"DIRECTION A"));
-        Button directionB=button(dir,"↻  მიმართულება B");weight(directionB,0);
-        directionB.setOnClickListener(v->sendPacket(3,1,"DIRECTION B"));
-        motorPanel.addView(text("მიმართულებების ↺/↻ რეალური შესაბამისობა ჯერ შესამოწმებელია.",11,0xff9CB0C9),top(-1,-2,7));
+        LinearLayout motorCard=card(root,0xff111C2D,24);
+        LinearLayout topInfo=row();
+        motorCard.addView(topInfo);
+        LinearLayout topLabels=new LinearLayout(this);topLabels.setOrientation(LinearLayout.VERTICAL);
+        topInfo.addView(topLabels,new LinearLayout.LayoutParams(0,-2,1));
+        topLabels.addView(sectionTitle("ბრუნვის მართვა"));
+        motorView=text("ძრავა: გამორთულია",13,0xff86A4BD);
+        topLabels.addView(motorView);
+        TextView live=text("●  MOTOR",11,0xff61E6D6);
+        live.setGravity(Gravity.RIGHT);
+        topInfo.addView(live);
 
-        LinearLayout speedPanel=panel(root,"სიჩქარე","6 დონე • + / − / პირდაპირი არჩევა");
-        LinearLayout speedRow=row();speedPanel.addView(speedRow,top(-1,-2,14));
-        Button minus=button(speedRow,"−");minus.setTextSize(25);minus.setLayoutParams(size(66,56));
-        speedSelected=text("06 / 06",25,0xff72EAD8);
-        speedSelected.setGravity(Gravity.CENTER);speedSelected.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        speedRow.addView(speedSelected,new LinearLayout.LayoutParams(0,dp(56),1));
-        Button plus=button(speedRow,"+");plus.setTextSize(25);plus.setLayoutParams(size(66,56));
-        minus.setOnClickListener(v->{selectedSpeed=Math.max(1,selectedSpeed-1);updateSelectedSpeed();sendPacket(2,selectedSpeed,"SPEED "+selectedSpeed);});
-        plus.setOnClickListener(v->{selectedSpeed=Math.min(6,selectedSpeed+1);updateSelectedSpeed();sendPacket(2,selectedSpeed,"SPEED "+selectedSpeed);});
-        LinearLayout levels=row();speedPanel.addView(levels,top(-1,-2,12));
-        for(int n=1;n<=6;n++){final int level=n;Button item=button(levels,String.valueOf(level));
-            weight(item,n==6?0:4);
-            item.setOnClickListener(v->{selectedSpeed=level;updateSelectedSpeed();sendPacket(2,level,"SPEED "+level);});
+        LinearLayout motorBtns=row();motorCard.addView(motorBtns,top(-1,-2,18));
+        Button motorStart=wideButton("▶   START",0xff0FAF9C);
+        motorStart.setTextSize(19);
+        motorBtns.addView(motorStart,new LinearLayout.LayoutParams(0,dp(68),1));
+        Button motorStop=wideButton("■   STOP",0xff9E4563);
+        motorStop.setTextSize(19);
+        LinearLayout.LayoutParams stopPar=new LinearLayout.LayoutParams(0,dp(68),1);
+        stopPar.leftMargin=dp(10);
+        motorBtns.addView(motorStop,stopPar);
+        motorStart.setOnClickListener(v->startManual());
+        motorStop.setOnClickListener(v->stopManual());
+
+        modeText=text("START — უწყვეტი მუშაობა, STOP-მდე",12,0xff9FB1CB);
+        motorCard.addView(modeText,top(-1,-2,12));
+
+        motorCard.addView(subLabel("მიმართულება"),top(-1,-2,18));
+        LinearLayout directions=row();motorCard.addView(directions,top(-1,-2,9));
+        Button a=wideButton("↺   A",0xff233450);
+        directions.addView(a,new LinearLayout.LayoutParams(0,dp(51),1));
+        a.setOnClickListener(v->sendPacket(3,0,"DIRECTION A"));
+        Button b=wideButton("↻   B",0xff233450);
+        LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(51),1);
+        bp.leftMargin=dp(9);directions.addView(b,bp);
+        b.setOnClickListener(v->sendPacket(3,1,"DIRECTION B"));
+
+        LinearLayout speedCard=card(root,0xff111C2D,24);
+        speedCard.addView(sectionTitle("სიჩქარე"));
+        speedCard.addView(text("6 დონე  ·  ± რეგულირება",12,0xff8DA6C0),top(-1,-2,3));
+        LinearLayout speedRow=row();speedCard.addView(speedRow,top(-1,-2,15));
+        Button minus=wideButton("−",0xff233450);
+        minus.setTextSize(28);speedRow.addView(minus,size(66,60));
+        speedSelected=text("06",31,0xff54EAD9);
+        speedSelected.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        speedSelected.setGravity(Gravity.CENTER);
+        speedRow.addView(speedSelected,new LinearLayout.LayoutParams(0,dp(60),1));
+        Button plus=wideButton("+",0xff233450);
+        plus.setTextSize(28);speedRow.addView(plus,size(66,60));
+        minus.setOnClickListener(v->applySpeed(Math.max(1,selectedSpeed-1)));
+        plus.setOnClickListener(v->applySpeed(Math.min(6,selectedSpeed+1)));
+        LinearLayout speedPresets=row();speedCard.addView(speedPresets,top(-1,-2,12));
+        for(int n=1;n<=6;n++){
+            final int speedValue=n;
+            Button v=compactButton(String.valueOf(n),0xff233450);
+            LinearLayout.LayoutParams vp=new LinearLayout.LayoutParams(0,dp(44),1);
+            if(n>1)vp.leftMargin=dp(6);
+            speedPresets.addView(v,vp);
+            v.setOnClickListener(x->applySpeed(speedValue));
         }
-        speedView=text("რეალური სიჩქარე: უცნობია",12,0xff9CB0C9);
-        speedPanel.addView(speedView,top(-1,-2,10));
+        speedView=text("კონტროლერის სიჩქარე: —",12,0xff8DA6C0);
+        speedCard.addView(speedView,top(-1,-2,10));
 
-        LinearLayout durationPanel=panel(root,"ბრუნვის ხანგრძლივობა","დადასტურებულია 5, 10 და 15 წამის ბრძანებები");
-        durationLabel=text("არჩეული: 10 წამი",14,0xff72EAD8);
-        durationPanel.addView(durationLabel,top(-1,-2,12));
-        LinearLayout durations=row();durationPanel.addView(durations,top(-1,-2,8));
-        for(int n:new int[]{5,10,15,20}){final int seconds=n;
-            Button item=button(durations,n+" წმ");weight(item,n==20?0:4);
-            item.setOnClickListener(v->{selectedDuration=seconds;durationLabel.setText("არჩეული: "+seconds+" წამი");sendPacket(4,seconds,"DURATION "+seconds);});
+        LinearLayout durationCard=card(root,0xff111C2D,24);
+        durationCard.addView(sectionTitle("დროით გაშვება"));
+        durationCard.addView(text("აირჩიე დრო — ძრავა მაშინვე ჩაირთვება და თავად გაჩერდება",12,0xff9BB0C8),top(-1,-2,5));
+        LinearLayout times=row();durationCard.addView(times,top(-1,-2,18));
+        for(int sec:new int[]{5,10,15,20}){
+            final int seconds=sec;
+            Button timer=wideButton(sec+" წმ",0xff233450);
+            timer.setTextSize(14);
+            LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(0,dp(55),1);
+            if(sec!=5)lp.leftMargin=dp(7);
+            times.addView(timer,lp);
+            timer.setOnClickListener(v->startTimed(seconds));
         }
-        Button custom=button(durationPanel,"Custom • სხვა დრო (1–60 წამი)");
-        custom.setLayoutParams(top(-1,52,10));custom.setOnClickListener(v->durationDialog());
+        Button custom=wideButton("＋  სხვა დრო",0xff1A3B4C);
+        durationCard.addView(custom,top(-1,49,10));
+        custom.setOnClickListener(v->durationDialog());
+        durationLabel=text("Manual START დროის არჩევას არ იყენებს",12,0xff61CFCB);
+        durationCard.addView(durationLabel,top(-1,-2,10));
 
-        LinearLayout lightPanel=panel(root,"განათება","LED • CCT • Colors • Loop");
-        LinearLayout lights=row();lightPanel.addView(lights,top(-1,-2,14));
-        Button lightOn=button(lights,"☀  LIGHT ON");weight(lightOn,8);
-        lightOn.setBackground(bg(0xff395D51,14));lightOn.setOnClickListener(v->sendPacket(6,1,"LIGHT ON"));
-        Button lightOff=button(lights,"☾  LIGHT OFF");weight(lightOff,0);
+        LinearLayout lights=card(root,0xff111C2D,24);
+        lights.addView(sectionTitle("განათება"));
+        lights.addView(text("განათების ჩართვა და რეჟიმების ცვლა",12,0xff8DA6C0),top(-1,-2,3));
+        LinearLayout led=row();lights.addView(led,top(-1,-2,16));
+        Button lightOn=wideButton("☀   ON",0xff446952);
+        led.addView(lightOn,new LinearLayout.LayoutParams(0,dp(55),1));
+        lightOn.setOnClickListener(v->sendPacket(6,1,"LIGHT ON"));
+        Button lightOff=wideButton("☾   OFF",0xff233450);
+        LinearLayout.LayoutParams offp=new LinearLayout.LayoutParams(0,dp(55),1);
+        offp.leftMargin=dp(9);led.addView(lightOff,offp);
         lightOff.setOnClickListener(v->sendPacket(6,0,"LIGHT OFF"));
-        lightPanel.addView(text("განათების რეჟიმი",14,Color.WHITE),top(-1,-2,15));
-        LinearLayout modes=row();lightPanel.addView(modes,top(-1,-2,8));
-        Button colors=button(modes,"Colors *");weight(colors,6);
-        colors.setOnClickListener(v->modeCandidate(0,"Colors"));
-        Button cct=button(modes,"CCT ↻");weight(cct,6);
-        cct.setBackground(bg(0xff205973,14));
-        cct.setOnClickListener(v->sendPacket(7,1,"CCT NEXT TONE"));
-        Button loop=button(modes,"Loop *");weight(loop,0);
-        loop.setOnClickListener(v->modeCandidate(2,"Loop"));
-        lightPanel.addView(text("CCT-ის ტონების 8 ცვლილებისას iPad ყოველთვის აგზავნიდა 07 01-ს. აქ ყოველი დაჭერა ამ კოდს იმეორებს. *Colors/Loop ჯერ საცდელია.",11,0xff9CB0C9),top(-1,-2,9));
-        lightPanel.addView(text("RGB ფერის არჩევა",14,Color.WHITE),top(-1,-2,14));
-        LinearLayout swatches=row();lightPanel.addView(swatches,top(-1,25,10));
-        for(int col:new int[]{0xffED4D74,0xffF6B64B,0xff4FE4AB,0xff4ABAF7,0xffAE7CF1,0xffFFFFFF}){
-            View dot=new View(this);dot.setBackground(bg(col,50));
-            LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(24),1);p.setMargins(dp(5),0,dp(5),0);
-            swatches.addView(dot,p);
-            dot.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("ფერების ცალკეული კოდები").setMessage("RGB ფერის ზუსტი ბრძანებები iPad-ის ლოგში არ ჩანს. ეს წერტილები მხოლოდ ფერთა წინასწარი ხედი არის და არ აგზავნის გამოგონილ კოდებს.").setPositiveButton("გასაგებია",null).show());
-        }
-        lightPanel.addView(text("კონკრეტული RGB ფერები ჯერ დაუდგენელია.",11,0xff9CB0C9),top(-1,-2,8));
-        lightPanel.addView(text("სიკაშკაშე • 08 xx (საცდელი)",14,Color.WHITE),top(-1,-2,15));
-        LinearLayout brightRow=row();lightPanel.addView(brightRow,top(-1,-2,6));
-        SeekBar brightness=new SeekBar(this);brightness.setMax(254);brightness.setProgress(254);
-        brightRow.addView(brightness,new LinearLayout.LayoutParams(0,dp(48),1));
-        TextView percent=text("100%",13,0xff72EAD8);brightRow.addView(percent,size(54,44));
-        brightness.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
-            @Override public void onProgressChanged(SeekBar b,int p,boolean user){percent.setText(Math.round((p+1)*100f/255)+"%");}
-            @Override public void onStartTrackingTouch(SeekBar b){}
-            @Override public void onStopTrackingTouch(SeekBar b){brightnessCandidate(b.getProgress()+1);}
+
+        lights.addView(subLabel("რეჟიმი"),top(-1,-2,17));
+        LinearLayout modes=row();lights.addView(modes,top(-1,-2,10));
+        Button colors=wideButton("Colors",0xff233450);
+        modes.addView(colors,new LinearLayout.LayoutParams(0,dp(52),1));
+        colors.setOnClickListener(v->sendPacket(7,0,"COLORS MODE"));
+        Button cct=wideButton("CCT",0xff156D7B);
+        LinearLayout.LayoutParams cctp=new LinearLayout.LayoutParams(0,dp(52),1);cctp.leftMargin=dp(8);
+        modes.addView(cct,cctp);
+        cct.setOnClickListener(v->sendPacket(7,1,"CCT NEXT"));
+        Button loop=wideButton("Loop",0xff233450);
+        LinearLayout.LayoutParams loopp=new LinearLayout.LayoutParams(0,dp(52),1);loopp.leftMargin=dp(8);
+        modes.addView(loop,loopp);
+        loop.setOnClickListener(v->sendPacket(7,2,"LOOP MODE"));
+
+        lights.addView(subLabel("სიკაშკაშე"),top(-1,-2,19));
+        LinearLayout bright=row();lights.addView(bright,top(-1,-2,8));
+        SeekBar slider=new SeekBar(this);slider.setMax(254);slider.setProgress(254);
+        bright.addView(slider,new LinearLayout.LayoutParams(0,dp(46),1));
+        TextView percentage=text("100%",13,0xff6DE9D9);
+        percentage.setGravity(Gravity.RIGHT|Gravity.CENTER_VERTICAL);
+        bright.addView(percentage,size(52,46));
+        slider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            @Override public void onProgressChanged(SeekBar sb,int progress,boolean byUser){
+                percentage.setText(Math.round((progress+1)*100f/255)+"%");
+            }
+            @Override public void onStartTrackingTouch(SeekBar sb){}
+            @Override public void onStopTrackingTouch(SeekBar sb){brightnessCandidate(sb.getProgress()+1);}
         });
-        lightPanel.addView(text("08 01 და 08 FF ფიქსირდება; შუალედური მნიშვნელობები ჯერ შესამოწმებელია.",11,0xff9CB0C9));
 
-        LinearLayout diagnostics=panel(root,"დიაგნოსტიკა","BLE TX/RX HEX პაკეტები და სტატუსი");
-        Button toggleLog=button(diagnostics,"▾  ლოგის გახსნა / დახურვა");toggleLog.setLayoutParams(top(-1,49,10));
-        logContainer=new LinearLayout(this);logContainer.setOrientation(LinearLayout.VERTICAL);
-        logContainer.setVisibility(View.GONE);diagnostics.addView(logContainer);
-        Button copy=button(logContainer,"📋 ლოგის კოპირება");copy.setLayoutParams(top(-1,48,7));
-        copy.setOnClickListener(v->{((ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE)).setPrimaryClip(ClipData.newPlainText("MOMENTO 360 Log",log.toString()));toast("ლოგი დაკოპირებულია");});
-        logView=text("",11,0xffB6C9DE);logView.setTextIsSelectable(true);logContainer.addView(logView,top(-1,-2,12));
-        toggleLog.setOnClickListener(v->logContainer.setVisibility(logContainer.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
-
-        root.addView(text("MOMENTO 360 • STUDIO v1.0 • FFE0 / FFE1",11,0xff8DA3C1),top(-1,-2,20));
+        root.addView(text("MOMENTO 360   ·   CONTROL STUDIO",11,0xff5F718D),top(-1,-2,21));
         BluetoothManager manager=(BluetoothManager)getSystemService(Context.BLUETOOTH_SERVICE);
         adapter=manager==null?null:manager.getAdapter();
-        addLog("STUDIO loaded: captured iPad BLE protocol");
-        addLog("CCT repeated 07/01 verified; Colors/Loop and RGB unmapped");
+    }
+
+    private TextView sectionTitle(String txt){
+        TextView title=text(txt,19,Color.WHITE);
+        title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        return title;
+    }
+    private TextView subLabel(String txt){
+        TextView result=text(txt,13,0xffA7BBD1);
+        result.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        return result;
+    }
+    private LinearLayout card(LinearLayout root,int color,int radius){
+        LinearLayout panel=new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setPadding(dp(17),dp(18),dp(17),dp(18));
+        GradientDrawable background=bg(color,radius);
+        background.setStroke(dp(1),0xff2B3D59);
+        panel.setBackground(background);
+        root.addView(panel,top(-1,-2,15));
+        return panel;
+    }
+    private Button wideButton(String txt,int color){
+        Button button=new Button(this);
+        button.setAllCaps(false);
+        button.setText(txt);
+        button.setTextSize(16);
+        button.setTextColor(Color.WHITE);
+        button.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
+        button.setBackground(bg(color,16));
+        button.setPadding(dp(5),0,dp(5),0);
+        return button;
+    }
+    private Button compactButton(String txt,int color){
+        Button button=wideButton(txt,color);
+        button.setTextSize(12);
+        return button;
+    }
+    private void applySpeed(int n){
+        if(!ready){toast("ჯერ დაუკავშირდი კონტროლერს");return;}
+        selectedSpeed=n;
+        updateSelectedSpeed();
+        sendPacket(2,n,"SPEED "+n);
+    }
+    private void startManual(){
+        if(!ready){toast("ჯერ დაუკავშირდი კონტროლერს");return;}
+        modeText.setText("●  ხელით მართვა • STOP-მდე უწყვეტად");
+        durationLabel.setText("ხელით გაშვება — დროის შეზღუდვის გარეშე");
+        sendTimedSequence(0);
+    }
+    private void startTimed(int seconds){
+        if(!ready){toast("ჯერ დაუკავშირდი კონტროლერს");return;}
+        selectedDuration=seconds;
+        modeText.setText("●  ტაიმერი • "+seconds+" წამი");
+        durationLabel.setText("გაშვებულია: "+seconds+" წამით");
+        sendTimedSequence(seconds);
+    }
+    private void sendTimedSequence(int seconds){
+        if(pendingStart!=null) handler.removeCallbacks(pendingStart);
+        sendPacket(4,seconds,seconds==0?"DURATION FOREVER":"DURATION "+seconds);
+        pendingStart=()->{
+            pendingStart=null;
+            sendPacket(1,1,seconds==0?"MANUAL START":"TIMED START "+seconds);
+        };
+        handler.postDelayed(pendingStart,250);
+    }
+    private void stopManual(){
+        if(pendingStart!=null)handler.removeCallbacks(pendingStart);
+        pendingStart=null;
+        if(!ready){toast("ჯერ დაუკავშირდი კონტროლერს");return;}
+        modeText.setText("●  გაჩერებულია");
+        durationLabel.setText("აირჩიე დრო ხელახლა გასაშვებად");
+        sendPacket(1,0,"MOTOR STOP");
     }
 
     private int dp(int n){return (int)(getResources().getDisplayMetrics().density*n+0.5f);}
@@ -191,14 +305,21 @@ public class MainActivity extends Activity {
         TextView heading=text(title,19,Color.WHITE);heading.setTypeface(Typeface.DEFAULT,Typeface.BOLD);p.addView(heading);
         p.addView(text(subtitle,12,0xff9CB0C9),top(-1,-2,4));return p;
     }
-    private void updateSelectedSpeed(){if(speedSelected!=null)speedSelected.setText(String.format(Locale.US,"%02d / 06",selectedSpeed));}
+    private void updateSelectedSpeed(){if(speedSelected!=null)speedSelected.setText(String.format(Locale.US,"%02d",selectedSpeed));}
     private void durationDialog(){
-        EditText e=new EditText(this);e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);e.setText(String.valueOf(selectedDuration));
-        new AlertDialog.Builder(this).setTitle("ხანგრძლივობა წამებში").setView(e).setNegativeButton("არა",null)
-          .setPositiveButton("დაყენება",(d,w)->{try{int seconds=Integer.parseInt(e.getText().toString().trim());
-             if(seconds<1||seconds>60){toast("დასაშვებია 1–60 წამი");return;}
-             selectedDuration=seconds;durationLabel.setText("არჩეული: "+seconds+" წამი");sendPacket(4,seconds,"DURATION "+seconds);
-          }catch(Exception x){toast("შეიყვანე რიცხვი");}}).show();
+        EditText e=new EditText(this);
+        e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
+        e.setText(String.valueOf(selectedDuration));
+        new AlertDialog.Builder(this).setTitle("გაშვების ხანგრძლივობა")
+            .setMessage("1-დან 60 წამამდე. დაჭერისას ძრავა მაშინვე ჩაირთვება.")
+            .setView(e).setNegativeButton("გაუქმება",null)
+            .setPositiveButton("გაშვება",(d,w)->{
+                try{
+                    int seconds=Integer.parseInt(e.getText().toString().trim());
+                    if(seconds<1||seconds>60){toast("დასაშვებია 1–60 წამი");return;}
+                    startTimed(seconds);
+                }catch(Exception error){toast("შეიყვანე რიცხვი");}
+            }).show();
     }
     private void modeCandidate(int val,String name){
         Runnable action=()->sendPacket(7,val,name+" EXPERIMENTAL");
@@ -225,14 +346,7 @@ public class MainActivity extends Activity {
     }
     private void toast(String s) { Toast.makeText(this,s,Toast.LENGTH_LONG).show(); }
     private void setConnection(String s) { runOnUiThread(() -> connectionView.setText("კავშირი: "+s)); }
-    private void addLog(String message) {
-        String line = new SimpleDateFormat("HH:mm:ss.SSS",Locale.US).format(new Date())+" | "+message+"\n";
-        runOnUiThread(() -> {
-            log.append(line);
-            if (log.length()>70000) log.delete(0,20000);
-            logView.setText(log.toString());
-        });
-    }
+    private void addLog(String message) { android.util.Log.d("MOMENTO360",message); }
     private boolean hasPermissions() {
         return Build.VERSION.SDK_INT < 31 ||
             (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN)==PackageManager.PERMISSION_GRANTED &&
@@ -342,7 +456,7 @@ public class MainActivity extends Activity {
             motor=currentMotor;speed=currentSpeed;selectedSpeed=currentSpeed;
             runOnUiThread(() -> {
                 motorView.setText("ძრავა: "+(currentMotor==0?"გამორთულია":currentMotor==1?"ჩართულია":"მდგომარეობა "+currentMotor));
-                speedView.setText("რეალური სიჩქარე: "+currentSpeed);
+                speedView.setText("კონტროლერის სიჩქარე: "+currentSpeed);
                 updateSelectedSpeed();
             });
             packetsReceived++;
@@ -378,6 +492,8 @@ public class MainActivity extends Activity {
         return b.toString();
     }
     private void disconnect() {
+        if(pendingStart!=null)handler.removeCallbacks(pendingStart);
+        pendingStart=null;
         stopScan();ready=false;commandCharacteristic=null;
         if(gatt!=null) { try { gatt.disconnect();gatt.close(); } catch(Exception ignored){} gatt=null; }
         setConnection("გათიშულია");
