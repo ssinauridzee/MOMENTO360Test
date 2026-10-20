@@ -453,7 +453,7 @@ public class MainActivity extends Activity {
             paint.setStrokeWidth(dp(2));
             canvas.drawCircle(cx,cy,radius+dp(9),paint);
             paint.setColor(key);
-            paint.setStrokeWidth(dp(3.3f));
+            paint.setStrokeWidth(dp(3));
             paint.setShadowLayer(dp(10),0,0,key);
             canvas.drawCircle(cx,cy,radius+dp(4),paint);
             paint.clearShadowLayer();
