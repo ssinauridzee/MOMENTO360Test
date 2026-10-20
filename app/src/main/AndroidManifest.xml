@@ -26,7 +26,9 @@
 
     <application
         android:allowBackup="false"
-        android:label="MOMENTO 360 Test"
+        android:label="MOMENTO 360"
+        android:icon="@drawable/momento_mark"
+        android:roundIcon="@drawable/momento_mark"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
 
