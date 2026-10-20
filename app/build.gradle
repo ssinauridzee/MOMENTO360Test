@@ -8,11 +8,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'ge.momento.modern360'
+        applicationId 'ge.momento.premium360'
         minSdk 26
         targetSdk 32
-        versionCode 3
-        versionName '2.0-modern'
+        versionCode 4
+        versionName '3.0-premium'
     }
 
     buildTypes {
