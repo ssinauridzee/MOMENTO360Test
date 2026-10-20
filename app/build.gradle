@@ -8,11 +8,11 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'ge.momento.test360'
+        applicationId 'ge.momento.bleemulator'
         minSdk 26
         targetSdk 32
         versionCode 1
-        versionName '1.0'
+        versionName '1.0-emulator'
     }
 
     buildTypes {
