@@ -351,7 +351,9 @@ public class MainActivity extends Activity {
     private void chooseDirection(int direction){
         if(!ready){toast("ჯერ დაუკავშირდი 360Tok-ს");return;}
         selectedDirection=direction;
-        sendPacket(3,direction,"DIRECTION "+direction);
+        // Controller direction values are reversed relative to the Georgian UI labels.
+        // Normal (left button) sends 0x01; Reverse (right button) sends 0x00.
+        sendPacket(3,direction==0?1:0,direction==0?"NORMAL ROTATION":"REVERSE ROTATION");
         syncVisualStates();
     }
     private void applySpeed(int value){
