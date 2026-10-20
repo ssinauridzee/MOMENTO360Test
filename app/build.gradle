@@ -8,7 +8,7 @@ android {
     compileSdk 35
 
     defaultConfig {
-        applicationId 'ge.momento.premium360'
+        applicationId 'ge.momento.premium360fixed'
         minSdk 26
         targetSdk 32
         versionCode 5
