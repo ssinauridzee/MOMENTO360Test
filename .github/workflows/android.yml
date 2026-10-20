@@ -1,10 +1,10 @@
-name: Build MOMENTO 360 Captured Commands APK
+name: Build MOMENTO 360 Studio APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - ble-control-captured
+      - momento360-studio
 
 jobs:
   build:
@@ -26,11 +26,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Build debug APK
+      - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
-      - name: Upload APK
+      - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-Captured-Control-APK
+          name: MOMENTO360-Studio-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
