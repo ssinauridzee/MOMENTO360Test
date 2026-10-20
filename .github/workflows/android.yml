@@ -1,10 +1,10 @@
-name: Build MOMENTO 360 Studio APK
+name: Build MOMENTO 360 Modern APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - momento360-studio
+      - momento360-modern-timer
 
 jobs:
   build:
@@ -31,6 +31,6 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-Studio-APK
+          name: MOMENTO360-Modern-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
