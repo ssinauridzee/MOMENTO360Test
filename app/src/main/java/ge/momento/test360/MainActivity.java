@@ -60,6 +60,16 @@ public class MainActivity extends Activity {
     private int selectedLightMode = 0;
     private int selectedTimer = 0;
     private boolean ledUiOn = true;
+    private GoProBridge goPro;
+    private TextView goProStatus, goProRecStatus;
+    private Button goProConnect, goProTest;
+    private boolean goProSessionRecording=false;
+    private boolean goProTestRecording=false;
+    private boolean awaitingGoProStart=false;
+    private boolean sessionSawMotorOn=false;
+    private boolean goProHelpShown=false;
+    private int sessionGeneration=0;
+
     private final int ink = 0xff07101f, panelInk = 0xff101d34, softText = 0xffA6BAD4,
             pearl = 0xffF5F8FF, turquoise = 0xff4CE7E0, blue = 0xff096DFA, pink = 0xffED3979;
 
@@ -111,6 +121,30 @@ public class MainActivity extends Activity {
                     .setPositiveButton("გათიშვა",(d,w)->disconnect()).show();
             else requestOrScan();
         });
+
+        // GoPro connection card; recording sync remains optional when manually overridden.
+        LinearLayout cameraPanel=panel(root,11);
+        LinearLayout cameraHead=horizontal();
+        cameraHead.setGravity(Gravity.CENTER_VERTICAL);
+        cameraPanel.addView(cameraHead);
+        LinearLayout cameraLabels=new LinearLayout(this);
+        cameraLabels.setOrientation(LinearLayout.VERTICAL);
+        cameraHead.addView(cameraLabels,new LinearLayout.LayoutParams(0,-2,1));
+        cameraLabels.addView(makeText("GoPro HERO9",16,pearl,true));
+        goProStatus=makeText("●  გათიშულია",12,softText,false);
+        cameraLabels.addView(goProStatus);
+        goProConnect=controlButton("დაკავშირება",false);
+        cameraHead.addView(goProConnect,layout(114,43,0));
+        goProConnect.setOnClickListener(v->connectGoPro());
+        LinearLayout cameraBottom=horizontal();
+        cameraBottom.setGravity(Gravity.CENTER_VERTICAL);
+        cameraPanel.addView(cameraBottom,layout(-1,36,6));
+        goProRecStatus=makeText("ვიდეო რეჟიმი • SD ბარათი",11,softText,false);
+        cameraBottom.addView(goProRecStatus,new LinearLayout.LayoutParams(0,-2,1));
+        goProTest=controlButton("REC TEST",false);
+        goProTest.setTextSize(11);
+        cameraBottom.addView(goProTest,layout(99,34,0));
+        goProTest.setOnClickListener(v->testGoPro());
 
         // The one single circular start / stop button controls the motor state.
         LinearLayout motorCard=panel(root,0);
@@ -244,6 +278,30 @@ public class MainActivity extends Activity {
 
         BluetoothManager manager=(BluetoothManager)getSystemService(Context.BLUETOOTH_SERVICE);
         adapter=manager==null?null:manager.getAdapter();
+        goPro=new GoProBridge(this,new GoProBridge.Listener(){
+            @Override public void onCameraStatus(String text,boolean connected){
+                runOnUiThread(()->{
+                    if(goProStatus!=null){
+                        goProStatus.setText("●  "+text);
+                        goProStatus.setTextColor(connected?0xff52EACF:softText);
+                    }
+                    if(goProConnect!=null)goProConnect.setText(connected?"● READY":"დაკავშირება");
+                    if(!connected&&goProRecStatus!=null&&!awaitingGoProStart)
+                        goProRecStatus.setText("ვიდეო რეჟიმი • SD ბარათი");
+                });
+            }
+            @Override public void onRecordingState(boolean recording,String text){
+                runOnUiThread(()->{
+                    if(goProRecStatus!=null){
+                        goProRecStatus.setText(recording?"● REC • GoPro":text);
+                        goProRecStatus.setTextColor(recording?0xffFF5987:softText);
+                    }
+                    if(goProTest!=null&&goProTestRecording){
+                        goProTest.setText(recording?"STOP TEST":"REC TEST");
+                    }
+                });
+            }
+        });
         syncVisualStates();
     }
 
@@ -378,43 +436,145 @@ public class MainActivity extends Activity {
         if(pendingStart!=null){handler.removeCallbacks(pendingStart);pendingStart=null;}
         if(autoUiStop!=null){handler.removeCallbacks(autoUiStop);autoUiStop=null;}
     }
-    private void startManual(){
-        if(!ready)return;
-        clearRunHandlers();
-        selectedTimer=0;
-        updateMotorState(true);
-        sendTimedSequence(0);
+    private void connectGoPro(){
+        if(goPro==null)return;
+        if(goPro.isReady()){
+            new AlertDialog.Builder(this).setTitle("GoPro HERO9")
+                .setMessage("GoPro უკვე დაკავშირებულია. ვიდეოს რეჟიმი წინასწარ შეარჩიე კამერაზე.")
+                .setNegativeButton("დახურვა",null)
+                .setPositiveButton("კავშირის გაწყვეტა",(d,w)->goPro.disconnect()).show();
+            return;
+        }
+        if(!hasPermissions()){
+            requestPermissions(new String[]{Manifest.permission.BLUETOOTH_SCAN,Manifest.permission.BLUETOOTH_CONNECT},51);
+            return;
+        }
+        if(!goProHelpShown){
+            goProHelpShown=true;
+            new AlertDialog.Builder(this).setTitle("GoPro HERO9 დაკავშირება")
+                .setMessage("GoPro-ზე გადადი Connections → Connect Device → GoPro Quik App (Pairing). აირჩიე ვიდეო რეჟიმი და დარწმუნდი, რომ SD ბარათი მუშაობს. დაწყვილების შეტყობინება დაადასტურე.")
+                .setNegativeButton("გაუქმება",null)
+                .setPositiveButton("GoPro-ს ძებნა",(d,w)->goPro.connect()).show();
+        }else goPro.connect();
     }
-    private void startTimed(int seconds){
+    private void testGoPro(){
+        if(goPro==null||!goPro.isReady()){
+            toast("ჯერ დაუკავშირდი GoPro HERO9-ს");return;
+        }
+        if(awaitingGoProStart||motorUiRunning){
+            toast("ძრავის გაშვებისას ტესტი გამორთულია");return;
+        }
+        boolean start=!goProTestRecording;
+        goProTest.setEnabled(false);
+        goProRecStatus.setText(start?"● GoPro REC…":"● GoPro STOP…");
+        goPro.setShutter(start,(success,detail)->{
+            goProTest.setEnabled(true);
+            if(success){
+                goProTestRecording=start;
+                goProTest.setText(start?"STOP TEST":"REC TEST");
+                goProRecStatus.setText(start?"● REC • GoPro":"GoPro მზადაა");
+            }else{
+                goProRecStatus.setText("GoPro: "+detail);
+                new AlertDialog.Builder(this).setTitle("GoPro ბრძანება ვერ შესრულდა")
+                    .setMessage(detail+" — გადაამოწმე ვიდეო რეჟიმი, SD ბარათი და დაწყვილება.")
+                    .setPositiveButton("გასაგებია",null).show();
+            }
+        });
+    }
+    private void startManual(){requestSynchronizedStart(0);}
+    private void startTimed(int seconds){requestSynchronizedStart(seconds);}
+    private void requestSynchronizedStart(int seconds){
         if(!ready){toast("ჯერ დაუკავშირდი 360Tok-ს");return;}
+        if(motorUiRunning||awaitingGoProStart){
+            toast("ჯერ გააჩერე მიმდინარე ბრუნვა");return;
+        }
+        if(goProTestRecording){
+            toast("ჯერ STOP TEST-ით გააჩერე GoPro");return;
+        }
+        if(goPro==null||!goPro.isReady()){
+            new AlertDialog.Builder(this).setTitle("GoPro გათიშულია")
+                .setMessage("კამერა არ არის დაკავშირებული. შეგიძლია ჯერ GoPro დააკავშირო ან მხოლოდ 360° პლატფორმა ჩართო ვიდეოჩაწერის გარეშე.")
+                .setNegativeButton("გაუქმება",null)
+                .setNeutralButton("მხოლოდ პლატფორმა",(d,w)->beginMotorRun(seconds))
+                .setPositiveButton("GoPro დაკავშირება",(d,w)->connectGoPro()).show();
+            return;
+        }
+        final int operation=++sessionGeneration;
+        awaitingGoProStart=true;
+        goProRecStatus.setText("● GoPro REC დაწყება…");
+        goPro.setShutter(true,(success,detail)->{
+            if(operation!=sessionGeneration){
+                if(success&&goPro!=null&&goPro.isReady())goPro.setShutter(false,null);
+                return;
+            }
+            awaitingGoProStart=false;
+            if(!success){
+                updateMotorState(false);
+                goProRecStatus.setText("GoPro: "+detail);
+                new AlertDialog.Builder(this).setTitle("GoPro ვერ იწყებს ჩაწერას")
+                    .setMessage(detail+". პლატფორმა უსაფრთხოების მიზნით არ დატრიალებულა. გადაამოწმე GoPro-ს ვიდეო რეჟიმი და SD ბარათი.")
+                    .setPositiveButton("გასაგებია",null).show();
+                return;
+            }
+            goProSessionRecording=true;
+            sessionSawMotorOn=false;
+            beginMotorRun(seconds);
+        });
+    }
+    private void beginMotorRun(int seconds){
+        if(!ready){toast("360Tok კავშირი დაიკარგა");stopSessionVideo();return;}
         clearRunHandlers();
         selectedTimer=seconds;
-        selectedDuration=seconds;
+        if(seconds>0)selectedDuration=seconds;
         updateMotorState(true);
         sendTimedSequence(seconds);
-        // Display-only countdown: controller itself stops at the selected time.
-        autoUiStop=()->{
-            autoUiStop=null;
-            selectedTimer=0;
-            updateMotorState(false);
-        };
-        handler.postDelayed(autoUiStop,seconds*1000L+650L);
+        if(seconds>0){
+            autoUiStop=()->{
+                autoUiStop=null;
+                if(selectedTimer==seconds){
+                    finishTimedSession();
+                }
+            };
+            handler.postDelayed(autoUiStop,seconds*1000L+700L);
+        }
     }
     private void sendTimedSequence(int seconds){
         sendPacket(4,seconds,seconds==0?"DURATION FOREVER":"DURATION "+seconds);
         pendingStart=()->{
             pendingStart=null;
-            sendPacket(1,1,seconds==0?"START MANUAL":"START TIMED");
+            if(ready)sendPacket(1,1,seconds==0?"MANUAL START":"TIMED START "+seconds);
         };
         handler.postDelayed(pendingStart,250);
     }
+    private void finishTimedSession(){
+        selectedTimer=0;
+        clearRunHandlers();
+        updateMotorState(false);
+        stopSessionVideo();
+    }
+    private void stopSessionVideo(){
+        if(goProSessionRecording){
+            goProSessionRecording=false;
+            if(goPro!=null&&goPro.isReady()){
+                goPro.setShutter(false,(success,detail)->{
+                    if(!success&&goProRecStatus!=null)goProRecStatus.setText("GoPro STOP: "+detail);
+                });
+            }else if(goProRecStatus!=null){
+                goProRecStatus.setText("GoPro კავშირი გაწყდა — გადაამოწმე REC");
+            }
+        }
+    }
     private void stopManual(){
-        if(!ready)return;
+        ++sessionGeneration;
+        awaitingGoProStart=false;
         clearRunHandlers();
         selectedTimer=0;
         updateMotorState(false);
-        sendPacket(1,0,"STOP");
+        // STOP must work for the motor even if GoPro has disappeared.
+        if(ready)sendPacket(1,0,"MOTOR STOP");
+        stopSessionVideo();
     }
+
     private void durationDialog(){
         EditText e=new EditText(this);
         e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER);
@@ -508,6 +668,7 @@ public class MainActivity extends Activity {
     @Override public void onRequestPermissionsResult(int code,String[] names,int[] result) {
         super.onRequestPermissionsResult(code,names,result);
         if (code==50) { if (hasPermissions()) scan(); else toast("Bluetooth ნებართვა აუცილებელია"); }
+        if (code==51) { if (hasPermissions()&&goPro!=null)goPro.connect(); else toast("GoPro-ს Bluetooth ნებართვა სჭირდება"); }
     }
     private final ScanCallback scanCallback = new ScanCallback() {
         @Override public void onScanResult(int type,ScanResult r) {
@@ -601,11 +762,18 @@ public class MainActivity extends Activity {
             motor=remoteMotor;speed=remoteSpeed;motorStatusSeen=true;
             runOnUiThread(()->{
                 if(remoteMotor==0||remoteMotor==1){
-                    if(remoteMotor==0){
+                    if(remoteMotor==1){
+                        if(motorUiRunning)sessionSawMotorOn=true;
+                        updateMotorState(true);
+                    }else if(sessionSawMotorOn&&motorUiRunning){
+                        sessionSawMotorOn=false;
                         selectedTimer=0;
-                        if(autoUiStop!=null){handler.removeCallbacks(autoUiStop);autoUiStop=null;}
+                        clearRunHandlers();
+                        updateMotorState(false);
+                        stopSessionVideo();
+                    }else if(!awaitingGoProStart&&!motorUiRunning){
+                        updateMotorState(false);
                     }
-                    updateMotorState(remoteMotor==1);
                 }
                 if(remoteSpeed>=1&&remoteSpeed<=6){
                     selectedSpeed=remoteSpeed;
@@ -650,5 +818,12 @@ public class MainActivity extends Activity {
         if(gatt!=null){try{gatt.disconnect();gatt.close();}catch(Exception ignored){}gatt=null;}
         runOnUiThread(()->syncVisualStates());
     }
-    @Override protected void onDestroy() {disconnect();handler.removeCallbacksAndMessages(null);super.onDestroy();}
+    @Override protected void onDestroy() {
+        ++sessionGeneration;
+        clearRunHandlers();
+        if(goPro!=null){if(goProSessionRecording)stopSessionVideo();goPro.close();}
+        disconnect();
+        handler.removeCallbacksAndMessages(null);
+        super.onDestroy();
+    }
 }
