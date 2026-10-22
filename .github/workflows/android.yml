@@ -1,10 +1,10 @@
-name: Build MOMENTO 360 Premium v3.1 Direction Fix APK
+name: Build MOMENTO 360 GoPro HERO9 APK
 
 on:
   workflow_dispatch:
   push:
     branches:
-      - momento360-direction-fix
+      - momento360-gopro-hero9
 
 jobs:
   build:
@@ -31,6 +31,6 @@ jobs:
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-Premium-v3.1-DirectionFix-APK
+          name: MOMENTO360-GoPro-HERO9-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
