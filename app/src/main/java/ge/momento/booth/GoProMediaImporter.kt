@@ -103,15 +103,23 @@ class GoProMediaImporter(private val context: Context) {
                     try {
                         items=listMedia(network)
                         problem=null
-                        if(items.isNotEmpty())break
+                        // Video metadata can lag behind the shutter STOP acknowledgement.
+                        val current=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
+                        val oldForThisSession=startedAt>0 && current!=null && current.mod>0 &&
+                            current.mod*1000L < startedAt-300000L
+                        if(items.isNotEmpty()&&!oldForThisSession)break
                     }catch(e:Exception){problem=e}
                     Thread.sleep(1200L)
                 }
                 if(items.isEmpty())throw problem?:IllegalStateException("GoPro-ზე MP4 არ მოიძებნა")
                 val latest=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
                     ?:error("GoPro-ის ვიდეო ვერ მოიძებნა")
-                if(prefs.getString("last_downloaded","")==latest.fingerprint)
+                if(prefs.getString("last_downloaded","")==latest.fingerprint){
+                    // Manual retry can reuse the original local MP4 if export or upload failed.
+                    val cached=File(context.filesDir,"MOMENTO_GOPRO_"+latest.dir+"_"+latest.name)
+                    if(startedAt==0L && cached.isFile && cached.length()>1024)return@runCatching cached
                     error("ეს GoPro ვიდეო უკვე გადმოტანილია — ახალი ჩანაწერი ვერ მოიძებნა")
+                }
                 if(startedAt>0 && latest.mod>0 && latest.mod*1000L < startedAt-300000L)
                     error("GoPro-ის ბოლო ვიდეო ძველია. კამერის თარიღი/საათი გადაამოწმე.")
                 if(latest.size>512L*1024*1024)error("MP4 512 MB-ზე დიდია — ამ ვერსიას პატარა ჩანაწერი სჭირდება")
