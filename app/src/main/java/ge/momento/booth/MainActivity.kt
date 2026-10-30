@@ -109,7 +109,7 @@ class MainActivity : Activity() {
         boothUi = Booth360Ui(
             this,
             onConnect = { if (permissions()) tok.connect() },
-            onToggle = { if (pending360 || (syncing360 && recording) || tok.motorOn == true) stopSynchronized360() else startSynchronized360(0) },
+            onToggle = { if (pending360 || syncing360 || tok.motorOn == true) stopSynchronized360() else startSynchronized360(0) },
             onTimed = { seconds -> startSynchronized360(seconds) },
             onCustom = { chooseBoothTime() },
             onDirection = { value -> if (tok.connected) { tok.send(3, if (value == 0) 1 else 0); boothUi.setDirection(value) } else boothUi.showMessage("360Tok დაკავშირებული არ არის") },
