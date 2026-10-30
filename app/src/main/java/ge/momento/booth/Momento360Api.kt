@@ -85,7 +85,7 @@ class Momento360Api(private val context: Context) {
             val r = runCatching {
                 require(hasKey()) { "ჯერ შეინახე WordPress-ის 360 API გასაღები." }
                 val reply = request("GET", "/check", null, operatorHeader())
-                Pair(reply.optBoolean("storage_ready", false), reply.optBoolean("sms_configured", false))
+                Pair(reply.optBoolean("drive_ready", false), reply.optBoolean("sms_configured", false))
             }
             main.post { done(r) }
         }.start()
@@ -115,48 +115,117 @@ class Momento360Api(private val context: Context) {
         }.start()
     }
 
-    /** Sequential 1 MiB chunks, resuming at the server's persisted offset when retried. */
+    /** Upload directly to Google Drive, no WP disk usage. */
     fun upload(file: File, session: Session, progress: (String) -> Unit, done: (Result<String>) -> Unit) {
         Thread {
-            val r = runCatching {
-                val total = file.length()
-                require(total in 16..536870912L) { "MP4 უნდა იყოს 512 MiB-ზე მცირე." }
-                var offset = request("GET", "/upload-status/${session.token}", null, uploadHeader(session))
-                    .getLong("uploaded_bytes")
-                if (offset > total) error("სერვერზე ატვირთული ზომა ლოკალურ ვიდეოს აღემატება.")
-                FileInputStream(file).use { input ->
-                    input.channel.position(offset)
-                    var failures = 0
-                    while (offset < total) {
-                        val batch = ByteArray(minOf(1_048_576L, total - offset).toInt())
-                        var received = 0
-                        while (received < batch.size) {
-                            val n = input.read(batch, received, batch.size - received)
-                            if (n == -1) error("ვიდეოს კითხვა მოულოდნელად შეწყდა")
-                            received += n
-                        }
-                        try {
-                            val reply = request("POST", "/chunk/${session.token}?offset=$offset&total=$total", batch,
-                                uploadHeader(session) + mapOf("Content-Type" to "application/octet-stream"))
-                            offset = reply.getLong("uploaded_bytes")
-                            failures = 0
-                            val percentage = (offset * 100 / total).toInt()
-                            main.post { progress("ვიდეო იტვირთება: $percentage%") }
-                        } catch (e: Exception) {
-                            if (++failures > 3) throw e
-                            Thread.sleep(1500L * failures)
-                            val status = request("GET", "/upload-status/${session.token}", null, uploadHeader(session))
-                            offset = status.getLong("uploaded_bytes")
-                            input.channel.position(offset)
-                        }
+            val result=runCatching {
+                val total=file.length()
+                require(file.isFile && total in 16..536870912L){"MP4 უნდა იყოს 512 MB-ზე ნაკლები"}
+                require(file.inputStream().use {
+                    val head=ByteArray(12)
+                    it.read(head)==12 && String(head,4,4,Charsets.US_ASCII)=="ftyp"
+                }){"არასწორი MP4 ფაილი"}
+                var restarted=false
+                var id=""
+                while(id.isBlank()){
+                    val init=request("POST","/drive/start/${session.token}",
+                        JSONObject().put("total",total).toString().toByteArray(Charsets.UTF_8),
+                        uploadHeader(session)+mapOf("Content-Type" to "application/json"))
+                    val url=init.getString("upload_url")
+                    val parsed=URL(url)
+                    require(parsed.protocol=="https" &&
+                        parsed.host in listOf("www.googleapis.com","content.googleapis.com") &&
+                        parsed.path.startsWith("/upload/drive/v3/files")){"არასწორი Drive upload URL"}
+                    try{id=driveSend(file,url,total,progress)}
+                    catch(e:DriveExpired){
+                        if(restarted)throw e
+                        restarted=true
+                        request("POST","/drive/reset/${session.token}","{}".toByteArray(),
+                            uploadHeader(session)+mapOf("Content-Type" to "application/json"))
                     }
                 }
-                val completed = request("POST", "/complete/${session.token}", "{}".toByteArray(),
-                    uploadHeader(session) + mapOf("Content-Type" to "application/json"))
-                if (!completed.optBoolean("ready", false)) error("სერვერმა ატვირთვა ვერ დაასრულა")
+                val answer=request("POST","/drive/complete/${session.token}",
+                    JSONObject().put("file_id",id).toString().toByteArray(),
+                    uploadHeader(session)+mapOf("Content-Type" to "application/json"))
+                check(answer.optBoolean("ready")){"Drive ფაილის დადასტურება ვერ მოხერხდა"}
                 session.url
             }
-            main.post { done(r) }
+            main.post{done(result)}
         }.start()
+    }
+    private class DriveExpired:Exception()
+    private fun driveOffset(range:String?):Long {
+        val m=Regex("bytes=0-([0-9]+)").matchEntire(range?.trim()?:"")
+        return if(m==null)0L else (m.groupValues[1].toLongOrNull()?:-1L)+1
+    }
+    private fun statusDrive(url:String,total:Long):Pair<Long,String> {
+        val c=webConnection(URL(url))
+        try {
+            c.requestMethod="PUT";c.connectTimeout=15000;c.readTimeout=25000
+            c.instanceFollowRedirects=false
+            c.setRequestProperty("Content-Range","bytes */${total}")
+            c.doOutput=true;c.setFixedLengthStreamingMode(0)
+            c.outputStream.use{}
+            when(c.responseCode){
+                308->return Pair(driveOffset(c.getHeaderField("Range")),"")
+                200,201->return Pair(total,JSONObject(c.inputStream.bufferedReader().use{it.readText()}).getString("id"))
+                404,410->throw DriveExpired()
+                else->error("Drive status HTTP ${c.responseCode}")
+            }
+        } finally{c.disconnect()}
+    }
+    private fun driveSend(file:File,url:String,total:Long,progress:(String)->Unit):String {
+        var (offset,existing)=statusDrive(url,total)
+        if(existing.isNotEmpty())return existing
+        var failed=0
+        FileInputStream(file).use{input->
+            while(offset<total){
+                try{
+                    input.channel.position(offset)
+                    val n=minOf(1048576L,total-offset).toInt()
+                    val bytes=ByteArray(n)
+                    var got=0
+                    while(got<n){
+                        val part=input.read(bytes,got,n-got)
+                        check(part>0){"MP4-ის კითხვა შეწყდა"}
+                        got+=part
+                    }
+                    val c=webConnection(URL(url))
+                    try{
+                        c.requestMethod="PUT";c.connectTimeout=18000;c.readTimeout=45000
+                        c.instanceFollowRedirects=false
+                        c.setRequestProperty("Content-Type","video/mp4")
+                        c.setRequestProperty("Content-Range","bytes ${offset}-${offset+n-1}/${total}")
+                        c.doOutput=true;c.setFixedLengthStreamingMode(n)
+                        c.outputStream.use{it.write(bytes)}
+                        when(c.responseCode){
+                            308->{val next=driveOffset(c.getHeaderField("Range"))
+                                if(next<=offset){
+                                    val state=statusDrive(url,total)
+                                    if(state.second.isNotEmpty())return state.second
+                                    offset=state.first
+                                }else offset=next
+                                failed=0
+                            }
+                            200,201->return JSONObject(c.inputStream.bufferedReader().use{it.readText()}).getString("id")
+                            404,410->throw DriveExpired()
+                            else->error("Drive HTTP ${c.responseCode}: "+
+                                (c.errorStream?.bufferedReader()?.use{it.readText()}?:"").take(150))
+                        }
+                    }finally{c.disconnect()}
+                    main.post{progress("Google Drive: ${offset*100/total}%")}
+                }catch(e:DriveExpired){throw e}
+                catch(e:Exception){
+                    if(++failed>=5)throw e
+                    Thread.sleep(1200L*failed)
+                    val state=statusDrive(url,total)
+                    if(state.second.isNotEmpty())return state.second
+                    offset=state.first
+                }
+            }
+        }
+        val final=statusDrive(url,total)
+        if(final.second.isNotEmpty())return final.second
+        error("Drive-ს ფაილის ID არ დაუბრუნებია")
     }
 }
