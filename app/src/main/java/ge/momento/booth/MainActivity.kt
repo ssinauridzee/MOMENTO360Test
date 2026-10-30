@@ -287,14 +287,14 @@ class MainActivity : Activity() {
         start = Button(this).apply { text = "START"; root.addView(this); setOnClickListener { if (recording) stopRecording() else startRecording() } }
         label("GoPro → Google Drive • ავტომატური MP4",19f)
         label("გადაღების დასრულებისთანავე ვიდეო microSD-დან ტელეფონში ჩამოიტვირთება, დამუშავდება და Google Drive-ში აიტვირთება.",13f)
-        importStatus=label("GoPro Wi-Fi ჯერ არ შემოწმებულა",14f)
+        importStatus=label("GoPro Wi-Fi ჯერ არ შემოწმებულა — მონაცემების შენახვა არ ნიშნავს დაკავშირებას.",14f)
         Button(this).apply {
             text="GoPro Wi-Fi მონაცემები • ერთჯერადი გამართვა"
             root.addView(this)
             setOnClickListener{showWifiCredentialsDialog(false)}
         }
         Button(this).apply {
-            text="⟳ GoPro-დან ბოლო MP4-ის გადმოტანა"
+            text="⟳ GoPro-სთან დაკავშირება და ბოლო MP4-ის გადმოტანა"
             root.addView(this)
             setOnClickListener{startGoProImport(false)}
         }
@@ -525,7 +525,8 @@ class MainActivity : Activity() {
                 runCatching{
                     importer.save(ssid.text.toString(),password.text.toString())
                 }.onSuccess{
-                    importStatus.text="GoPro Wi-Fi პარამეტრები შენახულია"
+                    importStatus.text="Wi-Fi სახელი/პაროლი შენახულია. დასაკავშირებლად დააჭირე «⟳ GoPro-დან ბოლო MP4-ის გადმოტანა» ან გადაიღე ახალი ვიდეო."
+                    Toast.makeText(this,"მხოლოდ Wi-Fi მონაცემები შეინახა; ვიდეო ჯერ არ გადმოწერილა",Toast.LENGTH_LONG).show()
                     if(retry)startGoProImport(true)
                 }.onFailure{
                     importStatus.text=it.message?:"არასწორი Wi-Fi მონაცემები"
@@ -551,7 +552,8 @@ class MainActivity : Activity() {
         }
         if(!wifiPermissionGranted())return
         importingFromGoPro=true;busy=true;refresh()
-        importStatus.text="GoPro-დან MP4-ის გადმოტანის დაწყება…"
+        importStatus.text="GoPro-სთან ვამყარებ Wi-Fi კავშირს…"
+        Toast.makeText(this,"GoPro-ს Wi-Fi კავშირს ვამოწმებ. თუ Android კავშირის დადასტურებას მოითხოვს, აირჩიე Connect.",Toast.LENGTH_LONG).show()
         val beginDownload:()->Unit = {
             val stored=importer.saved()
             if(stored==null){
@@ -560,7 +562,7 @@ class MainActivity : Activity() {
                 showWifiCredentialsDialog(automatic)
             }else{
                 importer.downloadLatest(if(automatic)captureStartedAtMs else 0L,
-                    {message->importStatus.text=message;state.text=message},
+                    {message->importStatus.text=message;state.text=message;android.util.Log.d("MOMENTO-Import",message)},
                     {result->
                         importingFromGoPro=false;busy=false
                         result.onSuccess{file->
@@ -575,6 +577,13 @@ class MainActivity : Activity() {
                             importStatus.text="GoPro გადმოტანა ვერ შესრულდა: "+error.message
                             state.text="კამერის ორიგინალი microSD-ზე უსაფრთხოდაა შენახული"
                             refresh()
+                            AlertDialog.Builder(this).setTitle("GoPro-ს ვიდეო არ გადმოწერილა")
+                                .setMessage((error.message?:"უცნობი შეცდომა")+
+                                    "\n\nრა შეამოწმო:\n1. GoPro ჩართულია და SD ბარათზე ვიდეო ჩანს.\n2. GoPro-ს Bluetooth კავშირი READY არის.\n3. ტელეფონზე გამოჩენილ GoPro Wi-Fi დაკავშირების მოთხოვნას დააჭირე Connect.\n4. თუ Wi-Fi ავტომატურად ვერ ერთდება, დროებით ხელით დაუკავშირდი GoPro-ს Wi-Fi ქსელს Android Settings-იდან და ისევ სცადე.\n5. Wi-Fi-ს «No internet» შეტყობინება GoPro-სთვის ნორმალურია.")
+                                .setNegativeButton("დახურვა",null)
+                                .setPositiveButton("Wi-Fi პარამეტრები"){_,_->
+                                    startActivity(Intent(android.provider.Settings.ACTION_WIFI_SETTINGS))
+                                }.show()
                         }
                     })
             }
@@ -582,13 +591,15 @@ class MainActivity : Activity() {
         if(connected){
             ble.enableWifiAp{ok->runOnUiThread{
                 if(!ok){
-                    importStatus.text="GoPro Wi-Fi ჩართვა ვერ დადასტურდა. სცადე ხელახლა."
-                    importingFromGoPro=false;busy=false;refresh()
+                    // An AP enable response may time out even if the camera Wi-Fi is already active.
+                    importStatus.text="Wi-Fi ბრძანების პასუხი ვერ მივიღეთ — პირდაპირ ვცდით დაკავშირებას…"
+                    beginDownload()
                 }else{
+                    importStatus.text="GoPro Wi-Fi აქტიურდება…"
                     ble.readWifiCredentials{ssid,password->runOnUiThread{
                         if(!ssid.isNullOrBlank()&&!password.isNullOrBlank())
                             runCatching{importer.save(ssid,password)}
-                        beginDownload()
+                        handler.postDelayed({beginDownload()},1800)
                     }}
                 }
             }}
