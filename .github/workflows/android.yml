@@ -1,7 +1,7 @@
-name: MOMENTO 360 Tabs Android APK
+name: MOMENTO 360 Google Drive Android APK
 on:
   push:
-    branches: [momento360-two-tabs]
+    branches: [momento360-google-drive]
   workflow_dispatch:
 jobs:
   build:
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-Tabs-APK
+          name: MOMENTO360-Google-Drive-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
