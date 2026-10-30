@@ -1,4 +1,4 @@
-name: MOMENTO 360 HERO9 WiFi Fix v1.1 APK
+name: MOMENTO 360 HERO9 WiFi Fix v1.2 APK
 on:
   push:
     branches: [momento360-gopro-wifi-diagnostics]
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-GoPro-WiFi-Fix-v1.1-APK
+          name: MOMENTO360-GoPro-WiFi-Fix-v1.2-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
