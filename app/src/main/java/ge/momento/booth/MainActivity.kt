@@ -38,6 +38,9 @@ class MainActivity : Activity() {
     private var uploadAfterReserve = false
     private lateinit var api: Momento360Api
     private lateinit var pendingUploads: PendingUploadQueue
+    private lateinit var preparedVideos: PreparedVideoQueue
+    private var reservingPrepared = false
+    private var retryLoop: Runnable? = null
     private lateinit var pendingLabel: TextView
     private var session: Momento360Api.Session? = null
     private lateinit var linkStatus: TextView
@@ -91,6 +94,7 @@ class MainActivity : Activity() {
         api = Momento360Api(this)
         importer = GoProMediaImporter(this)
         pendingUploads = PendingUploadQueue(this)
+        preparedVideos = PreparedVideoQueue(this)
         session = api.getSession()
         outputFile = api.getExportedFile()
         ble = GoProBle(this,
@@ -286,7 +290,7 @@ class MainActivity : Activity() {
         planView = label("", 16f)
         start = Button(this).apply { text = "START"; root.addView(this); setOnClickListener { if (recording) stopRecording() else startRecording() } }
         label("GoPro → Google Drive • ავტომატური MP4",19f)
-        label("გადაღების დასრულებისთანავე ვიდეო microSD-დან ტელეფონში ჩამოიტვირთება, დამუშავდება და Google Drive-ში აიტვირთება.",13f)
+        label("STOP-ის შემდეგ: GoPro MP4 → Slow Motion → Movies/MOMENTO360 → ატვირთვის რიგი. პირველ Wi-Fi დაკავშირებაზე Android-ის დასტური შესაძლოა აუცილებელი იყოს.",13f)
         importStatus=label("GoPro Wi-Fi ჯერ არ შემოწმებულა — მონაცემების შენახვა არ ნიშნავს დაკავშირებას.",14f)
         Button(this).apply {
             text="GoPro Wi-Fi მონაცემები • ერთჯერადი გამართვა"
@@ -741,6 +745,57 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Queue the processed MP4 before the network-dependent session reservation. */
+    private fun queuePrepared(file:File) {
+        try {
+            preparedVideos.add(file)
+            linkStatus.text = "დამუშავებული MP4 შენახულია. სერვერზე გადატანის მოლოდინში…"
+            updatePendingLabel()
+            autoProcessQueues()
+        } catch(e:Exception) {
+            linkStatus.text = "MP4 არსებობს, მაგრამ რიგში ვერ შეინახა: ${e.message}"
+        }
+    }
+
+    /** Continue after an offline GoPro session without losing earlier guests' videos. */
+    private fun autoProcessQueues() {
+        if (!::preparedVideos.isInitialized || !::pendingUploads.isInitialized ||
+            uploading || reservingLink || reservingPrepared || recording || exporting ||
+            importingFromGoPro || busy || isFinishing) return
+        if (pendingUploads.size()>0) {
+            uploadNextPending()
+            return
+        }
+        val file=preparedVideos.all().firstOrNull() ?: return
+        if (!api.hasKey()) {
+            linkStatus.text="ვიდეო დაცულია ტელეფონში. Google Drive-ისთვის შეიყვანე WordPress 360 API გასაღები."
+            return
+        }
+        reservingPrepared=true
+        linkStatus.text="მზად MP4-ისთვის ვქმნი ბმულს: ${file.name}"
+        api.reserve { outcome ->
+            reservingPrepared=false
+            outcome.onSuccess { s ->
+                try {
+                    pendingUploads.add(s,file)
+                    preparedVideos.remove(file)
+                    if (outputFile?.absolutePath == file.absolutePath) {
+                        session=s
+                        api.saveSession(s)
+                        linkStatus.text="ვიდეოს ბმული: ${s.url}. ახლა იტვირთება."
+                    }
+                    updatePendingLabel()
+                    uploadNextPending()
+                } catch(e:Exception) {
+                    linkStatus.text="ვიდეო შენახულია, მაგრამ ატვირთვის რიგის შეცდომაა: ${e.message}"
+                }
+            }.onFailure { e ->
+                linkStatus.text="ვიდეო ტელეფონში დაცულია; ბმული ჯერ ვერ შეიქმნა: ${e.message}. კავშირის აღდგენისას ავტომატურად განმეორდება."
+                updatePendingLabel()
+            }
+        }
+    }
+
     private fun reserveLink(autoUpload: Boolean = false) {
         if (reservingLink) {
             uploadAfterReserve = uploadAfterReserve || autoUpload
@@ -810,10 +865,10 @@ class MainActivity : Activity() {
                 if (session?.token == job.session.token)
                     linkStatus.text = "ვიდეო ატვირთულია და ხელმისაწვდომია! 💖\n$url"
                 updatePendingLabel()
-                if (pendingUploads.size() > 0) handler.post { uploadNextPending() }
+                handler.post { autoProcessQueues() }
             }.onFailure { e ->
                 if (session?.token == job.session.token)
-                    linkStatus.text = "ატვირთვა ვერ დასრულდა: ${e.message}\nვიდეო შენახულია რიგში. ინტერნეტის აღდგენისას დააჭირე «ატვირთვის გაგრძელება»."
+                    linkStatus.text = "ატვირთვა ვერ დასრულდა: ${e.message}\nვიდეო შენახულია რიგში და ავტომატურად განმეორდება, როცა ინტერნეტი ხელმისაწვდომი იქნება."
                 updatePendingLabel()
             }
             refresh()
@@ -822,7 +877,7 @@ class MainActivity : Activity() {
 
     private fun updatePendingLabel() {
         if (::pendingLabel.isInitialized)
-            pendingLabel.text = "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო. აპლიკაცია არ წაშალო, სანამ ყველა აიტვირთება."
+            pendingLabel.text = "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო. არ წაშალო აპლიკაცია."
     }
 
     private fun openShareDialog() {
@@ -1016,8 +1071,17 @@ class MainActivity : Activity() {
                 result.onSuccess { file ->
                     outputFile = file
                     api.saveExportedFile(file)
-                    mediaLabel.text = "მზადაა: ${file.name}"
-                    if (session != null) uploadReadyFile() else reserveLink(autoUpload = true)
+                    mediaLabel.text = "Slow Motion MP4 მზადაა: ${file.name}. ინახება გალერეაში…"
+                    GalleryPublisher.publish(this@MainActivity,file) { saveResult ->
+                        if(outputFile?.absolutePath == file.absolutePath) {
+                            saveResult.onSuccess{ location ->
+                                mediaLabel.text="Slow Motion MP4 შენახულია: $location"
+                            }.onFailure{ e ->
+                                mediaLabel.text="MP4 დამუშავებულია და აპში ინახება, მაგრამ გალერეაში ვერ შეინახა: ${e.message}"
+                            }
+                        }
+                    }
+                    queuePrepared(file)
                 }
                     .onFailure { e -> mediaLabel.text = "MP4 ვერ შეიქმნა: ${e.message}\nორიგინალი Preview არ წაშლილა — გამოიყენე მისი შენახვის ღილაკი." }
                 refresh()
@@ -1085,14 +1149,28 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume()
-        if (::pendingUploads.isInitialized && pendingUploads.size() > 0) {
-            handler.postDelayed({
-                if (!isFinishing && !uploading && !recording && !exporting) uploadNextPending()
-            }, 2500)
+        if (::preparedVideos.isInitialized) {
+            retryLoop?.let{handler.removeCallbacks(it)}
+            val task=object:Runnable {
+                override fun run(){
+                    if(isFinishing || isDestroyed)return
+                    autoProcessQueues()
+                    handler.postDelayed(this,20000L)
+                }
+            }
+            retryLoop=task
+            handler.postDelayed(task,1500L)
         }
     }
 
+    override fun onPause() {
+        retryLoop?.let{handler.removeCallbacks(it)}
+        retryLoop=null
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        retryLoop?.let{handler.removeCallbacks(it)}
         stoppingTask?.let { handler.removeCallbacks(it) }
         // Warning: foreground capture is intentionally not supported in v0.1.
         exporter.cancel()
