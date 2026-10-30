@@ -30,6 +30,12 @@ class GoProBle(private val context: Context, private val status: (String) -> Uni
     private val pending = ArrayDeque<Command>()
     private var inflight: Command? = null
     private var configured = false
+    private val wifiServiceId=UUID.fromString("b5f90001-aa8d-11e3-9046-0002a5d5c51b")
+    private val wifiSsidId=UUID.fromString("b5f90002-aa8d-11e3-9046-0002a5d5c51b")
+    private val wifiPasswordId=UUID.fromString("b5f90003-aa8d-11e3-9046-0002a5d5c51b")
+    private var wifiCredentialsCallback:((String?,String?)->Unit)?=null
+    private var wifiTempSsid:String?=null
+
 
     fun scanAndConnect() {
         if (!adapter.isEnabled) { status("ჩართე Bluetooth"); return }
@@ -56,9 +62,48 @@ class GoProBle(private val context: Context, private val status: (String) -> Uni
         scan?.let { adapter.bluetoothLeScanner?.stopScan(it) }; scan = null
         gatt?.disconnect(); gatt?.close(); gatt = null
         request = null; settingRequest = null; settingResponse=null; settingEnabled=false; configured = false; ready(false)
-        pending.clear(); inflight = null
+        pending.clear(); inflight = null; completeWifiCredentials(null,null)
     }
 
+    /** Read AP credentials from the paired HERO9. If GATT access is denied use one-time manual setup. */
+    fun readWifiCredentials(done:(String?,String?)->Unit) {
+        handler.post {
+            val g=gatt
+            val ch=g?.getService(wifiServiceId)?.getCharacteristic(wifiSsidId)
+            if(!configured || g==null || ch==null || wifiCredentialsCallback!=null) {
+                done(null,null);return@post
+            }
+            wifiCredentialsCallback=done
+            wifiTempSsid=null
+            @Suppress("DEPRECATION")
+            val ok=g.readCharacteristic(ch)
+            if(!ok)completeWifiCredentials(null,null)
+            handler.postDelayed({
+                if(wifiCredentialsCallback===done)completeWifiCredentials(null,null)
+            },6500)
+        }
+    }
+    private fun completeWifiCredentials(ssid:String?,password:String?) {
+        val cb=wifiCredentialsCallback
+        wifiCredentialsCallback=null;wifiTempSsid=null
+        cb?.invoke(ssid,password)
+    }
+    private fun wifiRead(g:BluetoothGatt,ch:BluetoothGattCharacteristic,value:ByteArray,code:Int){
+        handler.post {
+            if(wifiCredentialsCallback==null)return@post
+            if(code!=BluetoothGatt.GATT_SUCCESS){completeWifiCredentials(null,null);return@post}
+            val str=String(value,Charsets.UTF_8).trim(' ', '\u0000','\r','\n')
+            if(ch.uuid==wifiSsidId){
+                wifiTempSsid=str
+                val pass=g.getService(wifiServiceId)?.getCharacteristic(wifiPasswordId)
+                @Suppress("DEPRECATION")
+                val ok=pass!=null&&g.readCharacteristic(pass)
+                if(!ok)completeWifiCredentials(null,null)
+            }else if(ch.uuid==wifiPasswordId){
+                completeWifiCredentials(wifiTempSsid,str)
+            }
+        }
+    }
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, code: Int, state: Int) {
             if (code == BluetoothGatt.GATT_SUCCESS && state == BluetoothProfile.STATE_CONNECTED) {
@@ -110,6 +155,17 @@ class GoProBle(private val context: Context, private val status: (String) -> Uni
         @Deprecated("Compatibility with Android versions below 13")
         override fun onCharacteristicChanged(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             if (android.os.Build.VERSION.SDK_INT < 33) handleResponse(characteristic.uuid, characteristic.value ?: byteArrayOf())
+        }
+        override fun onCharacteristicRead(g:BluetoothGatt,ch:BluetoothGattCharacteristic,value:ByteArray,statusCode:Int){
+            wifiRead(g,ch,value,statusCode)
+        }
+        @Deprecated("Android pre-13 BLE read callback")
+        override fun onCharacteristicRead(g:BluetoothGatt,ch:BluetoothGattCharacteristic,statusCode:Int){
+            if(android.os.Build.VERSION.SDK_INT<33) {
+                @Suppress("DEPRECATION")
+                val value=ch.value?:byteArrayOf()
+                wifiRead(g,ch,value,statusCode)
+            }
         }
         override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, statusCode: Int) {
             if (statusCode != BluetoothGatt.GATT_SUCCESS) { val item = inflight; inflight = null; item?.result?.invoke(false); next() }
