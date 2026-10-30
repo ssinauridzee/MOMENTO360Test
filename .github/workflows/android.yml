@@ -1,7 +1,7 @@
-name: MOMENTO 360 HERO9 WiFi Fix v1.2 APK
+name: Dual WiFi STA STA Checker APK
 on:
   push:
-    branches: [momento360-gopro-wifi-diagnostics]
+    branches: [wifi-dual-sta-check]
   workflow_dispatch:
 jobs:
   build:
@@ -19,10 +19,10 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Compile debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+      - name: Compile Wi-Fi checker debug APK
+        run: gradle :wificheck:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-GoPro-WiFi-Fix-v1.2-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Dual-WiFi-Checker-APK
+          path: wificheck/build/outputs/apk/debug/wificheck-debug.apk
           if-no-files-found: error
