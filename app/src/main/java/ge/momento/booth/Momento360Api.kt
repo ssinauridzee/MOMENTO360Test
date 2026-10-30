@@ -41,16 +41,27 @@ class Momento360Api(private val context: Context) {
     fun hasKey() = !prefs.getString("app_key", "").isNullOrBlank()
     fun saveKey(key: String) { prefs.edit().putString("app_key", key.trim()).apply() }
 
-    // HERO9 AP is local-only Wi-Fi. Route momento.ge to mobile data when available;
-    // otherwise Android may try the internet-less GoPro network and fail.
+    // Never send public WordPress/Drive requests through the camera's internet-less AP.
+    // Network.openConnection also routes DNS over the chosen network, not the GoPro Wi-Fi.
     private fun webConnection(url: URL): HttpURLConnection {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val mobile = cm.allNetworks.firstOrNull { n ->
-            val caps = cm.getNetworkCapabilities(n)
-            caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
-                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val cm=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val networks=cm.allNetworks.mapNotNull { n ->
+            val c=cm.getNetworkCapabilities(n)
+            if(c!=null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET))
+                Pair(n,c) else null
         }
-        return (mobile?.openConnection(url) ?: url.openConnection()) as HttpURLConnection
+        val chosen=networks.firstOrNull { (_,c)->
+            c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } ?: networks.firstOrNull { (_,c)->
+            c.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+                c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } ?: networks.firstOrNull { (_,c)->
+            c.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        }
+        val network=chosen?.first ?: throw java.io.IOException(
+            "ინტერნეტის ქსელი მიუწვდომელია. ჩართე Mobile Data ან დაელოდე ჩვეულებრივ Wi-Fi-ზე დაბრუნებას; MP4 რიგში რჩება.")
+        return network.openConnection(url) as HttpURLConnection
     }
 
     private fun request(method: String, path: String, bytes: ByteArray? = null, headers: Map<String, String> = emptyMap()): JSONObject {
