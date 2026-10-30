@@ -117,7 +117,9 @@ class GoProMediaImporter(private val context: Context) {
                         val current=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
                         val oldForThisSession=startedAt>0 && current!=null && current.mod>0 &&
                             current.mod*1000L < startedAt-300000L
-                        if(items.isNotEmpty()&&!oldForThisSession)break
+                        val alreadyImported=startedAt>0 && current!=null &&
+                            prefs.getString("last_downloaded","")==current.fingerprint
+                        if(items.isNotEmpty()&&!oldForThisSession&&!alreadyImported)break
                     }catch(e:Exception){problem=e}
                     Thread.sleep(1500L)
                 }
@@ -128,7 +130,7 @@ class GoProMediaImporter(private val context: Context) {
                     // Manual retry can reuse the original local MP4 if export or upload failed.
                     val cached=File(context.filesDir,"MOMENTO_GOPRO_"+latest.dir+"_"+latest.name)
                     if(startedAt==0L && cached.isFile && cached.length()>1024){
-                        publishToGallery(cached,latest,progress)
+                        status(progress,"ორიგინალი GoPro MP4 ნაპოვნია. იწყება Slow Motion დამუშავება…")
                         return@runCatching cached
                     }
                     error("ეს GoPro ვიდეო უკვე გადმოტანილია — ახალი ჩანაწერი ვერ მოიძებნა")
@@ -139,7 +141,7 @@ class GoProMediaImporter(private val context: Context) {
                 status(progress,"კამერაზე აღმოჩნდა "+items.size+" MP4. ბოლოა "+latest.name+" — ვიწერთ…")
                 val file=download(network,latest,progress)
                 prefs.edit().putString("last_downloaded",latest.fingerprint).apply()
-                if(startedAt==0L)publishToGallery(file,latest,progress)
+                status(progress,"GoPro-ს ორიგინალი გადმოტანილია. ახლა შეიქმნება შენელებული საბოლოო MP4…")
                 file
             }
             finish(done,result)
