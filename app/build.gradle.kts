@@ -1,6 +1,6 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "ge.momento.booth"; compileSdk = 35
- defaultConfig { applicationId = "ge.momento.booth.gdrive"; minSdk = 26; targetSdk = 35; versionCode = 9; versionName = "0.9-google-drive" }
+ defaultConfig { applicationId = "ge.momento.booth.goproimport"; minSdk = 26; targetSdk = 35; versionCode = 10; versionName = "1.0-gopro-auto-transfer" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
 }
