@@ -25,6 +25,11 @@ import java.util.Locale
 
 class MainActivity : Activity() {
     private lateinit var ble: GoProBle
+    private lateinit var importer: GoProMediaImporter
+    private var importingFromGoPro=false
+    private var pendingWifiImport=false
+    private var captureStartedAtMs=0L
+    private lateinit var importStatus: TextView
     private lateinit var previewRecorder: GoProPreviewRecorder
     private lateinit var exporter: VideoExporter
     private lateinit var previewMp4Exporter: PreviewMp4Exporter
@@ -84,6 +89,7 @@ class MainActivity : Activity() {
         previewMp4Exporter = PreviewMp4Exporter(this)
         lastPreviewFile = filesDir.listFiles()?.filter { it.isFile && it.name.startsWith("MOMENTO_preview_") && it.extension == "ts" }?.maxByOrNull { it.lastModified() }
         api = Momento360Api(this)
+        importer = GoProMediaImporter(this)
         pendingUploads = PendingUploadQueue(this)
         session = api.getSession()
         outputFile = api.getExportedFile()
@@ -279,8 +285,22 @@ class MainActivity : Activity() {
         }
         planView = label("", 16f)
         start = Button(this).apply { text = "START"; root.addView(this); setOnClickListener { if (recording) stopRecording() else startRecording() } }
+        label("GoPro → Google Drive • ავტომატური MP4",19f)
+        label("გადაღების დასრულებისთანავე ვიდეო microSD-დან ტელეფონში ჩამოიტვირთება, დამუშავდება და Google Drive-ში აიტვირთება.",13f)
+        importStatus=label("GoPro Wi-Fi ჯერ არ შემოწმებულა",14f)
+        Button(this).apply {
+            text="GoPro Wi-Fi მონაცემები • ერთჯერადი გამართვა"
+            root.addView(this)
+            setOnClickListener{showWifiCredentialsDialog(false)}
+        }
+        Button(this).apply {
+            text="⟳ GoPro-დან ბოლო MP4-ის გადმოტანა"
+            root.addView(this)
+            setOnClickListener{startGoProImport(false)}
+        }
+        label("GoPro-ს Wi-Fi-ს პირველად Android-ის ფანჯარაში დადასტურება შეიძლება დასჭირდეს. ვიდეოს ჩამოტვირთვის შემდეგ აპლიკაცია Wi-Fi კავშირს ათავისუფლებს, რომ ინტერნეტი დაბრუნდეს.",12f)
         label("ვიდეოს დამუშავება და შენახვა", 19f)
-        label("microSD: ვიდეოს გადმოტანა ტელეფონში ჯერ ხელითაა საჭირო. SD-ის გარეშე: თუ კამერა Preview ნაკადს უშვებს, ფაილი თავად ჩაიწერება ტელეფონში და დამუშავება დაიწყება ავტომატურად.", 13f)
+        label("microSD: GoPro MP4 ავტომატურად გადმოდის ტელეფონში STOP-ის შემდეგ. SD-ის გარეშე: Preview სატესტო რეჟიმია.", 13f)
         val pick = Button(this).apply { text = "1. ვიდეოს არჩევა ტელეფონიდან"; root.addView(this) }
         mediaLabel = label("ვიდეო ჯერ არ არის არჩეული", 14f)
         Button(this).apply {
@@ -477,6 +497,106 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showWifiCredentialsDialog(retry:Boolean){
+        val current=importer.saved()
+        val fields=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL
+            setPadding(dp(18),dp(8),dp(18),0)
+        }
+        val ssid=EditText(this).apply{
+            hint="GoPro Wi-Fi სახელი (SSID)"
+            setSingleLine(true)
+            setText(current?.ssid?:"")
+            fields.addView(this)
+        }
+        val password=EditText(this).apply{
+            hint="GoPro Wi-Fi პაროლი"
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            setText(current?.password?:"")
+            fields.addView(this)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("GoPro HERO9 Wi-Fi")
+            .setMessage("ერთჯერადად შეიყვანე კამერის Connections → Camera Info-ში მითითებული Wi-Fi სახელი და პაროლი. შემდეგ აპლიკაცია შეეცდება ავტომატურად დაკავშირებას. Bluetooth-ით მიღებული მონაცემები ავტომატურად შეინახება.")
+            .setView(fields)
+            .setNegativeButton("გაუქმება",null)
+            .setPositiveButton("შენახვა"){_,_->
+                runCatching{
+                    importer.save(ssid.text.toString(),password.text.toString())
+                }.onSuccess{
+                    importStatus.text="GoPro Wi-Fi პარამეტრები შენახულია"
+                    if(retry)startGoProImport(true)
+                }.onFailure{
+                    importStatus.text=it.message?:"არასწორი Wi-Fi მონაცემები"
+                    Toast.makeText(this,it.message,Toast.LENGTH_LONG).show()
+                }
+            }.show()
+    }
+    private fun wifiPermissionGranted():Boolean{
+        val name=if(Build.VERSION.SDK_INT>=33)
+            Manifest.permission.NEARBY_WIFI_DEVICES
+            else Manifest.permission.ACCESS_FINE_LOCATION
+        if(Build.VERSION.SDK_INT>=29 && checkSelfPermission(name)!=PackageManager.PERMISSION_GRANTED){
+            pendingWifiImport=true
+            requestPermissions(arrayOf(name),811)
+            return false
+        }
+        return true
+    }
+    private fun startGoProImport(automatic:Boolean){
+        if(importingFromGoPro||exporting||recording||busy){
+            importStatus.text="ჯერ მიმდინარე გადაღება ან ვიდეოს დამუშავება დაასრულე"
+            return
+        }
+        if(!wifiPermissionGranted())return
+        importingFromGoPro=true;busy=true;refresh()
+        importStatus.text="GoPro-დან MP4-ის გადმოტანის დაწყება…"
+        val beginDownload:()->Unit = {
+            val stored=importer.saved()
+            if(stored==null){
+                importingFromGoPro=false;busy=false;refresh()
+                importStatus.text="GoPro Wi-Fi მონაცემები მიუთითე"
+                showWifiCredentialsDialog(automatic)
+            }else{
+                importer.downloadLatest(if(automatic)captureStartedAtMs else 0L,
+                    {message->importStatus.text=message;state.text=message},
+                    {result->
+                        importingFromGoPro=false;busy=false
+                        result.onSuccess{file->
+                            videoInput=Uri.fromFile(file)
+                            selectedPlan=selectedPlan?:plan()
+                            outputFile=null
+                            mediaLabel.text="GoPro-დან გადმოტანილია: "+file.name+". იწყება MP4 დამუშავება…"
+                            importStatus.text="გადმოტანილია • "+file.name
+                            refresh()
+                            exportSelected()
+                        }.onFailure{error->
+                            importStatus.text="GoPro გადმოტანა ვერ შესრულდა: "+error.message
+                            state.text="კამერის ორიგინალი microSD-ზე უსაფრთხოდაა შენახული"
+                            refresh()
+                        }
+                    })
+            }
+        }
+        if(connected){
+            ble.enableWifiAp{ok->runOnUiThread{
+                if(!ok){
+                    importStatus.text="GoPro Wi-Fi ჩართვა ვერ დადასტურდა. სცადე ხელახლა."
+                    importingFromGoPro=false;busy=false;refresh()
+                }else{
+                    ble.readWifiCredentials{ssid,password->runOnUiThread{
+                        if(!ssid.isNullOrBlank()&&!password.isNullOrBlank())
+                            runCatching{importer.save(ssid,password)}
+                        beginDownload()
+                    }}
+                }
+            }}
+        }else{
+            // A manually-connected Wi-Fi network can be used without BLE.
+            beginDownload()
+        }
+    }
+
     private fun chooseBoothTime() {
         val input=EditText(this).apply {
             inputType=InputType.TYPE_CLASS_NUMBER
@@ -520,6 +640,13 @@ class MainActivity : Activity() {
                 .setPositiveButton("GoPro",{_,_->showTab(false)})
                 .setNegativeButton("გაუქმება",null).show()
             return
+        }
+        if(useCamera){
+            session=null;api.clearSession()
+            outputFile=null;api.clearExportedFile()
+            videoInput=null
+            selectedPlan=plan()
+            captureStartedAtMs=System.currentTimeMillis()
         }
         val generation=++syncSessionId
         current360Seconds=seconds
@@ -592,8 +719,8 @@ class MainActivity : Activity() {
                 busy=false
                 recording=!ok
                 if (ok) {
-                    state.text="GoPro გადაღება დასრულდა. ვიდეო SD ბარათზეა."
-                    reserveLink()
+                    state.text="GoPro გადაღება დასრულდა. იწყება microSD-დან გადმოტანა…"
+                    startGoProImport(true)
                 } else state.text="GoPro STOP ვერ დადასტურდა — გადაამოწმე კამერა"
                 refresh()
             } }
@@ -786,7 +913,9 @@ class MainActivity : Activity() {
         videoInput = null
         mediaLabel.text = "ახალი სტუმრისთვის აირჩიე ახლად გადაღებული ვიდეო."
         linkStatus.text = "ახალი სტუმარი: ბმული შეიქმნება გადაღების დასრულებისას."
-        val p = plan(); selectedPlan = p; busy = true; refresh()
+        val p = plan(); selectedPlan = p
+        captureStartedAtMs=System.currentTimeMillis()
+        busy = true; refresh()
         state.text = "კამერისთვის START ბრძანების გაგზავნა…"
         ble.shutter(true) { ok -> runOnUiThread {
             busy = false
@@ -857,8 +986,8 @@ class MainActivity : Activity() {
             busy = false
             if (ok) recording = false
             state.text = if (ok) "გადაღება დასრულდა. ფაილი GoPro-ის SD ბარათზეა." else "STOP ვერ დადასტურდა — გადაამოწმე კამერა და სცადე STOP ხელახლა"
-            if (ok) reserveLink()
             refresh()
+            if (ok) startGoProImport(true)
         } }
     }
     private fun exportSelected() {
@@ -934,6 +1063,13 @@ class MainActivity : Activity() {
         if (requestCode == 800 && grantResults.isNotEmpty() && grantResults.all { it == PackageManager.PERMISSION_GRANTED }) {
             if (boothScroll.visibility == View.VISIBLE) tok.connect() else ble.scanAndConnect()
         }
+        if (requestCode == 811 && pendingWifiImport) {
+            pendingWifiImport=false
+            if(grantResults.isNotEmpty()&&grantResults.all{it==PackageManager.PERMISSION_GRANTED})
+                startGoProImport(true)
+            else if(::importStatus.isInitialized)
+                importStatus.text="GoPro Wi-Fi-სთან ავტომატური დაკავშირების ნებართვა აუცილებელია"
+        }
     }
     override fun onResume() {
         super.onResume()
@@ -950,6 +1086,7 @@ class MainActivity : Activity() {
         exporter.cancel()
         if (::previewMp4Exporter.isInitialized) previewMp4Exporter.cancel()
         if (::previewRecorder.isInitialized) previewRecorder.stop()
+        if (::importer.isInitialized) importer.close()
         syncStopTimeout?.let { handler.removeCallbacks(it) }
         motorOnlyTimeout?.let { handler.removeCallbacks(it) }
         // Prevent camera recording from being orphaned by a tab / process shutdown.
