@@ -109,7 +109,7 @@ class Booth360Ui(
         main.addView(label("◉  ბრუნვის მართვა",17f,WHITE,true))
         val circleParams=params(186,186,5).apply {gravity=Gravity.CENTER_HORIZONTAL}
         main.addView(motorButton,circleParams)
-        motorButton.setOnClickListener { if(!working) onToggle() }
+        motorButton.setOnClickListener { onToggle() }
         motorBadge=chip("●  გაჩერებულია")
         main.addView(motorBadge,params(172,34,0).apply {gravity=Gravity.CENTER_HORIZONTAL})
         main.addView(label("მიმართულება",12f,MUTED,true),params(-1,-2,13))
