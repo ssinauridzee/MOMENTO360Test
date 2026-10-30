@@ -436,8 +436,9 @@ class MainActivity : Activity() {
             "momento.ge — საიტთან დაკავშირება",
             "გადაღების რეჟიმი",
             "საბოლოო ვიდეოს ხანგრძლივობა",
+            "GoPro → Google Drive • ავტომატური MP4",
             "ვიდეოს დამუშავება და შენახვა",
-            "momento.ge — სტუმრის ვიდეოს გაზიარება"
+            "momento.ge — Google Drive ვიდეოს გაზიარება"
         )
         var section: LinearLayout? = null
         fun newCard(): LinearLayout {
