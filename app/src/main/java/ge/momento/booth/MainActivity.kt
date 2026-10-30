@@ -28,6 +28,7 @@ class MainActivity : Activity() {
     private lateinit var importer: GoProMediaImporter
     private var importingFromGoPro=false
     private var pendingWifiImport=false
+    private var pendingWifiAutomatic=false
     private var captureStartedAtMs=0L
     private lateinit var importStatus: TextView
     private lateinit var previewRecorder: GoProPreviewRecorder
@@ -526,7 +527,8 @@ class MainActivity : Activity() {
                     importer.save(ssid.text.toString(),password.text.toString())
                 }.onSuccess{
                     importStatus.text="GoPro Wi-Fi პარამეტრები შენახულია"
-                    if(retry)startGoProImport(true)
+                    // First-time setup must continue the pending download even after manual retry.
+                    handler.post { startGoProImport(retry) }
                 }.onFailure{
                     importStatus.text=it.message?:"არასწორი Wi-Fi მონაცემები"
                     Toast.makeText(this,it.message,Toast.LENGTH_LONG).show()
@@ -549,7 +551,11 @@ class MainActivity : Activity() {
             importStatus.text="ჯერ მიმდინარე გადაღება ან ვიდეოს დამუშავება დაასრულე"
             return
         }
-        if(!wifiPermissionGranted())return
+        pendingWifiAutomatic=automatic
+        if(!wifiPermissionGranted()){
+            importStatus.text="დაადასტურე Wi-Fi ნებართვა, რომ MP4-ის გადმოტანა გაგრძელდეს"
+            return
+        }
         importingFromGoPro=true;busy=true;refresh()
         importStatus.text="GoPro-დან MP4-ის გადმოტანის დაწყება…"
         val beginDownload:()->Unit = {
@@ -573,8 +579,20 @@ class MainActivity : Activity() {
                             exportSelected()
                         }.onFailure{error->
                             importStatus.text="GoPro გადმოტანა ვერ შესრულდა: "+error.message
-                            state.text="კამერის ორიგინალი microSD-ზე უსაფრთხოდაა შენახული"
+                            state.text="GoPro Wi-Fi/MP4 შეცდომა: "+(error.message?:"უცნობი შეცდომა")
                             refresh()
+                            AlertDialog.Builder(this@MainActivity)
+                                .setTitle("GoPro ვიდეო ვერ ჩამოიტვირთა")
+                                .setMessage((error.message?:"კამერასთან კავშირი ვერ დამყარდა")+
+                                    "\n\n1. GoPro-ს Bluetooth დააკავშირე აპლიკაციაში.\n"+
+                                    "2. GoPro Wi-Fi SSID/პაროლი გადაამოწმე.\n"+
+                                    "3. Android-ის Wi-Fi დაკავშირების ფანჯარაში დააჭირე Connect.\n"+
+                                    "4. კამერაში SD ბარათი უნდა იყოს და MP4 გადაღება დასრულებული.\n\n"+
+                                    "ორიგინალი microSD-ზე რჩება.")
+                                .setNegativeButton("დახურვა",null)
+                                .setNeutralButton("Wi-Fi მონაცემები"){_,_->showWifiCredentialsDialog(false)}
+                                .setPositiveButton("ხელახლა ცდა"){_,_->startGoProImport(false)}
+                                .show()
                         }
                     })
             }
@@ -582,8 +600,9 @@ class MainActivity : Activity() {
         if(connected){
             ble.enableWifiAp{ok->runOnUiThread{
                 if(!ok){
-                    importStatus.text="GoPro Wi-Fi ჩართვა ვერ დადასტურდა. სცადე ხელახლა."
-                    importingFromGoPro=false;busy=false;refresh()
+                    // Some HERO9 firmware doesn't ACK this command even when the AP is already on.
+                    importStatus.text="GoPro Wi-Fi ჩართვის დასტური ვერ მივიღეთ; ვცდით შენახულ ქსელს…"
+                    beginDownload()
                 }else{
                     ble.readWifiCredentials{ssid,password->runOnUiThread{
                         if(!ssid.isNullOrBlank()&&!password.isNullOrBlank())
@@ -1067,7 +1086,7 @@ class MainActivity : Activity() {
         if (requestCode == 811 && pendingWifiImport) {
             pendingWifiImport=false
             if(grantResults.isNotEmpty()&&grantResults.all{it==PackageManager.PERMISSION_GRANTED})
-                startGoProImport(true)
+                startGoProImport(pendingWifiAutomatic)
             else if(::importStatus.isInitialized)
                 importStatus.text="GoPro Wi-Fi-სთან ავტომატური დაკავშირების ნებართვა აუცილებელია"
         }
