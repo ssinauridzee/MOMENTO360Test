@@ -12,6 +12,9 @@ import android.os.Looper
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
+import android.content.ContentValues
+import android.os.Environment
+import android.provider.MediaStore
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
@@ -51,13 +54,18 @@ class GoProMediaImporter(private val context: Context) {
     fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit){
         if(busy){done(Result.failure(IllegalStateException("უკვე მიმდინარეობს GoPro-დან გადმოტანა")));return}
         busy=true;cancelled.set(false)
-        status(progress,"GoPro Wi-Fi-ის ძებნა…")
+        status(progress,"GoPro Wi-Fi-ის ძებნა… თუ Android ქსელთან დაკავშირებას გთხოვს, დააჭირე Connect")
         thread(name="momento-wifi-select"){
+            status(progress,"ვამოწმებ, უკვე დაკავშირებულია თუ არა ტელეფონი GoPro-ს Wi-Fi-ზე…")
             val wifi=manager.allNetworks.firstOrNull{net->
                 manager.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true &&
                 runCatching{listMedia(net).isNotEmpty()}.getOrDefault(false)
             }
-            if(wifi!=null){doDownload(wifi,startedAt,progress,done);return@thread}
+            if(wifi!=null){
+                status(progress,"GoPro-ს Wi-Fi უკვე დაკავშირებულია — ვკითხულობ ვიდეოების სიას…")
+                doDownload(wifi,startedAt,progress,done);return@thread
+            }
+            status(progress,"ტელეფონი GoPro-ს Wi-Fi-ზე არ არის — Android-ს ვთხოვ კამერის ქსელზე გადასვლას…")
             val credentials=saved()
             if(credentials==null){
                 finish(done,Result.failure(IllegalStateException(
@@ -78,7 +86,7 @@ class GoProMediaImporter(private val context: Context) {
                         .setNetworkSpecifier(spec).build()
                     val cb=object:ConnectivityManager.NetworkCallback(){
                         override fun onAvailable(network:Network){
-                            status(progress,"GoPro Wi-Fi დაკავშირებულია")
+                            status(progress,"Wi-Fi დამყარდა; ველოდებით GoPro-ს ფაილების სერვერის მზადყოფნას…")
                             doDownload(network,startedAt,progress,done)
                         }
                         override fun onUnavailable(){
@@ -87,7 +95,7 @@ class GoProMediaImporter(private val context: Context) {
                         }
                     }
                     callback=cb
-                    status(progress,"დაადასტურე GoPro Wi-Fi კავშირი Android-ის ფანჯარაში")
+                    status(progress,"ახლა Android-ის ფანჯარაში დაადასტურე GoPro Wi-Fi (Connect). უსასრულოდ არ დაელოდო — 30 წამში გამოჩნდება შეცდომა.")
                     manager.requestNetwork(request,cb,30000)
                 }catch(e:Exception){finish(done,Result.failure(e))}
             }
@@ -98,7 +106,9 @@ class GoProMediaImporter(private val context: Context) {
             val result=runCatching{
                 var items:List<Media> = emptyList()
                 var problem:Exception?=null
-                for(attempt in 1..9){
+                for(attempt in 1..15){
+                    if(attempt==1 || attempt%3==0)
+                        status(progress,"GoPro-ს მედია API: შემოწმება $attempt/15…")
                     if(cancelled.get())error("გადმოტანა შეჩერებულია")
                     try {
                         items=listMedia(network)
@@ -109,23 +119,27 @@ class GoProMediaImporter(private val context: Context) {
                             current.mod*1000L < startedAt-300000L
                         if(items.isNotEmpty()&&!oldForThisSession)break
                     }catch(e:Exception){problem=e}
-                    Thread.sleep(1200L)
+                    Thread.sleep(1500L)
                 }
-                if(items.isEmpty())throw problem?:IllegalStateException("GoPro-ზე MP4 არ მოიძებნა")
+                if(items.isEmpty())throw problem?:IllegalStateException("GoPro-ს microSD-ზე MP4 ვერ მოიძებნა — შეამოწმე GoPro-ზე ჩაწერილი ვიდეო")
                 val latest=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
                     ?:error("GoPro-ის ვიდეო ვერ მოიძებნა")
                 if(prefs.getString("last_downloaded","")==latest.fingerprint){
                     // Manual retry can reuse the original local MP4 if export or upload failed.
                     val cached=File(context.filesDir,"MOMENTO_GOPRO_"+latest.dir+"_"+latest.name)
-                    if(startedAt==0L && cached.isFile && cached.length()>1024)return@runCatching cached
+                    if(startedAt==0L && cached.isFile && cached.length()>1024){
+                        publishToGallery(cached,latest,progress)
+                        return@runCatching cached
+                    }
                     error("ეს GoPro ვიდეო უკვე გადმოტანილია — ახალი ჩანაწერი ვერ მოიძებნა")
                 }
                 if(startedAt>0 && latest.mod>0 && latest.mod*1000L < startedAt-300000L)
                     error("GoPro-ის ბოლო ვიდეო ძველია. კამერის თარიღი/საათი გადაამოწმე.")
                 if(latest.size>512L*1024*1024)error("MP4 512 MB-ზე დიდია — ამ ვერსიას პატარა ჩანაწერი სჭირდება")
-                status(progress,"GoPro: "+latest.name+" — ჩამოტვირთვა")
+                status(progress,"კამერაზე აღმოჩნდა "+items.size+" MP4. ბოლოა "+latest.name+" — ვიწერთ…")
                 val file=download(network,latest,progress)
                 prefs.edit().putString("last_downloaded",latest.fingerprint).apply()
+                if(startedAt==0L)publishToGallery(file,latest,progress)
                 file
             }
             finish(done,result)
@@ -202,6 +216,38 @@ class GoProMediaImporter(private val context: Context) {
             }finally{c.disconnect()}
         }
     }
+    /** On manual downloads, publish a visible copy to Movies/MOMENTO360.
+     * Automatic sessions keep their working files private to avoid filling the phone gallery with 100s of duplicates. */
+    private fun publishToGallery(file:File,media:Media,progress:(String)->Unit){
+        if(Build.VERSION.SDK_INT<29) {
+            status(progress,"GoPro MP4 ჩამოტანილია აპლიკაციაში; Android 9-ზე საჯარო Movies ექსპორტი არ არის ჩართული")
+            return
+        }
+        if(prefs.getString("gallery_copy","")==media.fingerprint)return
+        var uri:android.net.Uri?=null
+        try{
+            status(progress,"ვინახავთ MP4 ასლს ტელეფონის Movies/MOMENTO360 საქაღალდეში…")
+            val resolver=context.contentResolver
+            val values=ContentValues().apply{
+                put(MediaStore.Video.Media.DISPLAY_NAME,"MOMENTO_"+media.dir+"_"+media.name)
+                put(MediaStore.Video.Media.MIME_TYPE,"video/mp4")
+                put(MediaStore.Video.Media.RELATIVE_PATH,Environment.DIRECTORY_MOVIES+"/MOMENTO360")
+                put(MediaStore.Video.Media.IS_PENDING,1)
+            }
+            uri=resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)
+                ?:error("Movies საქაღალდის გახსნა ვერ მოხერხდა")
+            resolver.openOutputStream(uri)?.use{out->
+                file.inputStream().buffered().use{input->input.copyTo(out)}
+            } ?: error("Gallery MP4 ფაილის ჩაწერა ვერ მოხერხდა")
+            resolver.update(uri,ContentValues().apply{put(MediaStore.Video.Media.IS_PENDING,0)},null,null)
+            prefs.edit().putString("gallery_copy",media.fingerprint).apply()
+            status(progress,"MP4 ტელეფონშიც შენახულია: Movies/MOMENTO360")
+        }catch(e:Exception){
+            uri?.let{runCatching{context.contentResolver.delete(it,null,null)}}
+            status(progress,"MP4 აპლიკაციაში გადმოტანილია; Movies-ში დამატება ვერ მოხერხდა: "+e.message)
+        }
+    }
+
     fun close(){
         cancelled.set(true)
         val old=callback;callback=null
