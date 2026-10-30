@@ -188,7 +188,7 @@ class MainActivity : Activity() {
                 state.text = "WordPress 360 მოდულთან კავშირის შემოწმება…"
                 api.checkServer { result ->
                     result.onSuccess { (storage, sms) ->
-                        state.text = "momento.ge კავშირი მუშაობს. საცავი: " +
+                        state.text = "momento.ge კავშირი მუშაობს. Google Drive: " +
                             (if (storage) "მზადაა" else "შეცდომა") +
                             "; SMSOffice: " + (if (sms) "გამართულია" else "გადასამოწმებელია")
                     }.onFailure { e -> state.text = "საიტთან კავშირი ვერ დადასტურდა: ${e.message}" }
@@ -343,11 +343,11 @@ class MainActivity : Activity() {
                 startActivityForResult(intent, 902)
             }
         }
-        label("momento.ge — სტუმრის ვიდეოს გაზიარება", 19f)
+        label("momento.ge — Google Drive ვიდეოს გაზიარება", 19f)
         linkStatus = label(session?.let { "წინა ვიდეოს ბმული აღდგენილია: ${it.url}" }
             ?: "ბმული ჯერ არ შექმნილა. გადაღების STOP-ის შემდეგ სერვერზე ავტომატურად შეიქმნება.", 14f)
         shareButton = Button(this).apply { text = "ლინკი / QR კოდი / SMS"; root.addView(this); setOnClickListener { openShareDialog() } }
-        uploadButton = Button(this).apply { text = "მიმდინარე MP4-ის ატვირთვა"; root.addView(this); setOnClickListener { uploadReadyFile() } }
+        uploadButton = Button(this).apply { text = "MP4-ის Google Drive-ზე ატვირთვა"; root.addView(this); setOnClickListener { uploadReadyFile() } }
         pendingLabel = label("", 14f)
         Button(this).apply {
             text = "⟳ გადაუტვირთავი ვიდეოების ატვირთვის გაგრძელება"
