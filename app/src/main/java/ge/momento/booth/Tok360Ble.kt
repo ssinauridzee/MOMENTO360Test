@@ -19,7 +19,7 @@ import java.util.UUID
  */
 @SuppressLint("MissingPermission")
 class Tok360Ble(
-    context: Context,
+    private val context: Context,
     private val onStatus: (String) -> Unit,
     private val onData: (connected: Boolean, motorOn: Boolean?, speed: Int?) -> Unit
 ) {
