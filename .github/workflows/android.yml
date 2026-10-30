@@ -1,7 +1,7 @@
 name: MOMENTO 360 HERO9 Auto Transfer APK
 on:
   push:
-    branches: [momento360-gopro-autodownload]
+    branches: [momento360-gopro-wifi-diagnostics]
   workflow_dispatch:
 jobs:
   build:
