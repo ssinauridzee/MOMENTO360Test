@@ -19,8 +19,8 @@ import webbrowser
 
 from processor import (
     Cancelled, SlowSegment, SUPPORTED_EXTENSIONS, choose_output_name,
-    ffmpeg_path, parse_seconds, parse_segments, probe_duration, render, result_duration,
-    validate_duration,
+    ffmpeg_path, parse_seconds, parse_segments, plan_timeline, format_segments,
+    probe_duration, render, result_duration, validate_duration,
 )
 
 BG = '#0C1627'
@@ -36,13 +36,17 @@ FONT = 'Segoe UI'
 
 
 class VideoItem:
-    def __init__(self, path: Path, segments: str):
+    def __init__(self, path: Path, settings: tuple):
         self.path = path
-        self.segments = segments
+        self.settings = settings   # (start, slow final seconds, speed, tail override, extras)
+        self.segments = ''
         self.duration: float | None = None
+        self.tail_seconds: float | None = None
+        self.expected_duration: float | None = None
+        self.slow_actual_seconds: float | None = None
         self.output: Path | None = None
         self.output_duration: float | None = None
-        self.status = 'მზადაა'
+        self.status = 'ხანგრძლივობის შემოწმება…'
         self.error = ''
 
 
@@ -65,6 +69,8 @@ class SlowMoApp:
         self.slow_length_var = tk.StringVar(value='2')
         self.slow_speed_var = tk.StringVar(value='0.25× — 4-ჯერ ნელა')
         self.extra_intervals_var = tk.StringVar(value='')
+        self.tail_mode_var = tk.StringVar(value='auto')
+        self.tail_seconds_var = tk.StringVar(value='')
         self.preview_var = tk.StringVar(value='3–5 წმ → 8 წმ ნელი ვიდეო')
         self.output_var = tk.StringVar(value=str(Path.home() / 'Videos' / 'MOMENTO_MERIA_READY'))
         self.fps_var = tk.StringVar(value='60')
@@ -76,7 +82,8 @@ class SlowMoApp:
         self._syncing_fields = False
         self._build_ui()
         for field in (self.slow_start_var, self.slow_length_var,
-                      self.slow_speed_var, self.extra_intervals_var):
+                      self.slow_speed_var, self.extra_intervals_var,
+                      self.tail_mode_var, self.tail_seconds_var):
             field.trace_add('write', self._on_settings_edited)
         self._update_segment_preview()
         self.root.after(80, self._poll)
