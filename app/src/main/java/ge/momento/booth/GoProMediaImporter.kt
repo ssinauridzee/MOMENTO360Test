@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.io.FileOutputStream
 import android.content.ContentValues
@@ -30,10 +31,26 @@ class GoProMediaImporter(private val context: Context) {
     private val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     private val prefs=context.getSharedPreferences("momento_gopro_wifi", Context.MODE_PRIVATE)
     private val cancelled=AtomicBoolean(false)
+    private val finishOnce=AtomicBoolean(false)
     @Volatile private var busy=false
     private var callback:ConnectivityManager.NetworkCallback?=null
 
     fun isBusy()=busy
+
+    /** Interrupt a background transfer immediately when the operator presses START.
+     * The .partial file is retained and next attempt uses HTTP Range to resume it. */
+    fun pause() { cancelled.set(true) }
+
+    private fun delivered():Set<String> {
+        val array=runCatching{JSONArray(prefs.getString("delivered_v15","[]"))}.getOrElse{JSONArray()}
+        return (0 until array.length()).mapNotNull{array.optString(it).takeIf{value->value.isNotBlank()}}.toSet()
+    }
+    private fun recordDelivered(fingerprint:String) {
+        val list=(delivered().toList()+fingerprint).distinct().takeLast(200)
+        val array=JSONArray()
+        list.forEach{array.put(it)}
+        prefs.edit().putString("delivered_v15",array.toString()).putString("last_downloaded",fingerprint).commit()
+    }
     fun saved():Credentials? {
         val ssid=prefs.getString("ssid","")!!.trim()
         val password=prefs.getString("password","")!!
@@ -46,14 +63,15 @@ class GoProMediaImporter(private val context: Context) {
     }
     private fun status(out:(String)->Unit,message:String){handler.post{out(message)}}
     private fun finish(cb:(Result<File>)->Unit,result:Result<File>){
+        if(!finishOnce.compareAndSet(false,true))return
         val old=callback;callback=null
         if(old!=null)runCatching{manager.unregisterNetworkCallback(old)}
         busy=false
         handler.post{cb(result)}
     }
-    fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit){
+    fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean=false){
         if(busy){done(Result.failure(IllegalStateException("უკვე მიმდინარეობს GoPro-დან გადმოტანა")));return}
-        busy=true;cancelled.set(false)
+        busy=true;cancelled.set(false);finishOnce.set(false)
         status(progress,"GoPro Wi-Fi-ის ძებნა… თუ Android ქსელთან დაკავშირებას გთხოვს, დააჭირე Connect")
         thread(name="momento-wifi-select"){
             status(progress,"ვამოწმებ, უკვე დაკავშირებულია თუ არა ტელეფონი GoPro-ს Wi-Fi-ზე…")
@@ -61,9 +79,12 @@ class GoProMediaImporter(private val context: Context) {
                 manager.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true &&
                 runCatching{listMedia(net).isNotEmpty()}.getOrDefault(false)
             }
+            if(cancelled.get()){
+                finish(done,Result.failure(InterruptedException("ახალი გადაღების გამო გადმოტანა შეჩერდა")));return@thread
+            }
             if(wifi!=null){
                 status(progress,"GoPro-ს Wi-Fi უკვე დაკავშირებულია — ვკითხულობ ვიდეოების სიას…")
-                doDownload(wifi,startedAt,progress,done);return@thread
+                doDownload(wifi,startedAt,progress,done,sequential);return@thread
             }
             status(progress,"ტელეფონი GoPro-ს Wi-Fi-ზე არ არის — Android-ს ვთხოვ კამერის ქსელზე გადასვლას…")
             val credentials=saved()
@@ -77,6 +98,10 @@ class GoProMediaImporter(private val context: Context) {
                 return@thread
             }
             handler.post {
+                if(cancelled.get()){
+                    finish(done,Result.failure(InterruptedException("ჩამოტვირთვა შეჩერებულია")))
+                    return@post
+                }
                 try{
                     val spec=WifiNetworkSpecifier.Builder().setSsid(credentials.ssid)
                         .setWpa2Passphrase(credentials.password).build()
@@ -87,7 +112,9 @@ class GoProMediaImporter(private val context: Context) {
                     val cb=object:ConnectivityManager.NetworkCallback(){
                         override fun onAvailable(network:Network){
                             status(progress,"Wi-Fi დამყარდა; ველოდებით GoPro-ს ფაილების სერვერის მზადყოფნას…")
-                            doDownload(network,startedAt,progress,done)
+                            if(cancelled.get())
+                                finish(done,Result.failure(InterruptedException("გადმოტანა ახალი გადაღებისთვის შეჩერდა")))
+                            else doDownload(network,startedAt,progress,done,sequential)
                         }
                         override fun onUnavailable(){
                             finish(done,Result.failure(IllegalStateException(
@@ -101,46 +128,48 @@ class GoProMediaImporter(private val context: Context) {
             }
         }
     }
-    private fun doDownload(network:Network,startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit){
+    private fun doDownload(network:Network,startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean){
         thread(name="momento-gopro-mp4"){
             val result=runCatching{
-                var items:List<Media> = emptyList()
                 var problem:Exception?=null
-                for(attempt in 1..15){
+                var chosen:Media?=null
+                val alreadyDelivered=delivered()+listOfNotNull(prefs.getString("last_downloaded",""))
+                for(attempt in 1..18){
+                    if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
                     if(attempt==1 || attempt%3==0)
-                        status(progress,"GoPro-ს მედია API: შემოწმება $attempt/15…")
-                    if(cancelled.get())error("გადმოტანა შეჩერებულია")
+                        status(progress,"GoPro-ს ვიდეოების რიგის შემოწმება $attempt/18…")
                     try {
-                        items=listMedia(network)
-                        problem=null
-                        // Video metadata can lag behind the shutter STOP acknowledgement.
-                        val current=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
-                        val oldForThisSession=startedAt>0 && current!=null && current.mod>0 &&
-                            current.mod*1000L < startedAt-300000L
-                        val alreadyImported=startedAt>0 && current!=null &&
-                            prefs.getString("last_downloaded","")==current.fingerprint
-                        if(items.isNotEmpty()&&!oldForThisSession&&!alreadyImported)break
-                    }catch(e:Exception){problem=e}
-                    Thread.sleep(1500L)
+                        val items=listMedia(network)
+                        val candidates=items.filter{item ->
+                            if(startedAt>0L && item.mod>0L &&
+                                item.mod*1000L < startedAt-30000L)return@filter false
+                            if(sequential && item.fingerprint in alreadyDelivered)return@filter false
+                            true
+                        }
+                        chosen=if(sequential) {
+                            // Stop timestamps identify the session; selecting the oldest not-yet-
+                            // delivered recent clip prevents later guests being mistaken for older ones.
+                            candidates.minWithOrNull(compareBy<Media>{it.mod}.thenBy{it.dir}.thenBy{it.name})
+                        } else {
+                            candidates.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.dir}.thenBy{it.name})
+                        }
+                        if(chosen!=null)break
+                    } catch(e:Exception){problem=e}
+                    Thread.sleep(1300L)
                 }
-                if(items.isEmpty())throw problem?:IllegalStateException("GoPro-ს microSD-ზე MP4 ვერ მოიძებნა — შეამოწმე GoPro-ზე ჩაწერილი ვიდეო")
-                val latest=items.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.name})
-                    ?:error("GoPro-ის ვიდეო ვერ მოიძებნა")
-                if(prefs.getString("last_downloaded","")==latest.fingerprint){
-                    // Manual retry can reuse the original local MP4 if export or upload failed.
-                    val cached=File(context.filesDir,"MOMENTO_GOPRO_"+latest.dir+"_"+latest.name)
-                    if(startedAt==0L && cached.isFile && cached.length()>1024){
-                        status(progress,"ორიგინალი GoPro MP4 ნაპოვნია. იწყება Slow Motion დამუშავება…")
-                        return@runCatching cached
-                    }
-                    error("ეს GoPro ვიდეო უკვე გადმოტანილია — ახალი ჩანაწერი ვერ მოიძებნა")
+                val selected=chosen ?: throw (problem ?: IllegalStateException(
+                    "ამ გადაღების ახალი MP4 კამერაზე ვერ მოიძებნა; ვიდეო ისევ GoPro-ს microSD-ზეა. კამერის თარიღი გადაამოწმე."))
+                if(!sequential && prefs.getString("last_downloaded","")==selected.fingerprint) {
+                    val cached=File(context.filesDir,"MOMENTO_GOPRO_"+selected.dir+"_"+selected.name)
+                    if(cached.isFile && cached.length()>1024)return@runCatching cached
+                    error("ეს ვიდეო უკვე გადმოტანილია")
                 }
-                if(startedAt>0 && latest.mod>0 && latest.mod*1000L < startedAt-300000L)
-                    error("GoPro-ის ბოლო ვიდეო ძველია. კამერის თარიღი/საათი გადაამოწმე.")
-                if(latest.size>512L*1024*1024)error("MP4 512 MB-ზე დიდია — ამ ვერსიას პატარა ჩანაწერი სჭირდება")
-                status(progress,"კამერაზე აღმოჩნდა "+items.size+" MP4. ბოლოა "+latest.name+" — ვიწერთ…")
-                val file=download(network,latest,progress)
-                prefs.edit().putString("last_downloaded",latest.fingerprint).apply()
+                if(selected.size>512L*1024*1024)error("MP4 512 MB-ზე დიდია")
+                if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
+                status(progress,"ჩანაწერი "+selected.name+" მოიძებნა — ვიწერთ…")
+                val file=download(network,selected,progress)
+                if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
+                recordDelivered(selected.fingerprint)
                 status(progress,"GoPro-ს ორიგინალი გადმოტანილია. ახლა შეიქმნება შენელებული საბოლოო MP4…")
                 file
             }
