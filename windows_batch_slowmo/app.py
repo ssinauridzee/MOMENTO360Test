@@ -428,7 +428,7 @@ class SlowMoApp:
     def _add_paths(self, paths: list[Path]):
         new = []
         try:
-            spec = self._current_spec()
+            settings = self._current_settings()
         except ValueError as e:
             messagebox.showerror('შენელების პარამეტრები', str(e))
             return
@@ -438,14 +438,16 @@ class SlowMoApp:
             key = str(path.resolve()).lower()
             if key in self.items:
                 continue
-            item = VideoItem(path.resolve(), spec)
+            item = VideoItem(path.resolve(), settings)
             self.items[key] = item
             self.tree.insert('', 'end', iid=key,
-                             values=(path.name, '...', item.segments, item.status))
+                             values=self._row_values(item))
             new.append((key, path))
         self.count_label.config(text=f'სულ: {len(self.items)} ვიდეო')
         if new:
-            self.status_var.set(f'დაემატა {len(new)} ვიდეო. პარამეტრები შეგიძლია ყველას ერთად მიუთითო.')
+            self.status_var.set(
+                f'დაემატა {len(new)} ვიდეო. თითოეულს ავტომატურად '
+                'დაეთვლება ჩვეულებრივი ბოლო მონაკვეთი.')
             threading.Thread(target=self._probe_items, args=(new,), daemon=True).start()
 
     def _probe_items(self, items):
