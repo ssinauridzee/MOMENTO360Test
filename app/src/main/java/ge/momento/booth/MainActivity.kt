@@ -385,7 +385,7 @@ class MainActivity : Activity() {
         uploadButton = Button(this).apply { text = "MP4-ის Google Drive-ზე ატვირთვა"; root.addView(this); setOnClickListener { uploadReadyFile() } }
         pendingLabel = label("", 14f)
         Button(this).apply {
-            text = "⟳ გადაუტვირთავი ვიდეოების ატვირთვის გაგრძელება"
+            text = "⟳ GoPro ვიდეოების აღდგენა / ჩამოტვირთვის ხელახალი ცდა"
             root.addView(this)
             setOnClickListener {
                 captures.oldest()?.let { captures.retryNow(it.id) }
@@ -1491,7 +1491,7 @@ class MainActivity : Activity() {
                     updatePendingLabel()
                     AlertDialog.Builder(this)
                         .setTitle("ძველი რიგი შემოტანილია")
-                        .setMessage("ამ ფაილიდან დაემატა $count ვიდეო და $guestCount სტუმრის ნომერი.\\n\\nთუ ტელეფონში ჯერ მხოლოდ ერთი XML ფაილი შემოიტანე, ახლა იგივე ღილაკიდან მეორე ფაილიც აირჩიე.\\n\\nდასრულების შემდეგ უნდა გადაამოწმო GoPro-ს ვიდეოების თანმიმდევრობა, რათა SMS არასწორ სტუმარს არ გაეგზავნოს.\\n\\nv1.5 არ წაშალო.")
+                        .setMessage("ამ ფაილიდან დაემატა $count ვიდეო და $guestCount სტუმრის ნომერი.\n\nთუ ტელეფონში ჯერ მხოლოდ ერთი XML ფაილი შემოიტანე, ახლა იგივე ღილაკიდან მეორე ფაილიც აირჩიე.\n\nდასრულების შემდეგ უნდა გადაამოწმო GoPro-ს ვიდეოების თანმიმდევრობა, რათა SMS არასწორ სტუმარს არ გაეგზავნოს.\n\nv1.5 არ წაშალო.")
                         .setPositiveButton("გასაგებია",null)
                         .show()
                 } catch(e:Exception) {
