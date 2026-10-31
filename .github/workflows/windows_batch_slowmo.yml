@@ -63,6 +63,15 @@ jobs:
           & $ffmpeg -hide_banner -loglevel error -i "test_output/MOMENTO_test.mp4" -f null -
           if ($LASTEXITCODE -ne 0) { throw "Rendered MP4 decode check failed" }
           Write-Host "Windows EXE video render smoke test passed"
+          # Must actually render a normal/slow/normal timeline with ending frames
+          & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=320x180:rate=30" -t 12 -c:v libx264 -pix_fmt yuv420p "test_output/gopro_12s.mp4"
+          if ($LASTEXITCODE -ne 0) { throw "Could not create 12-second source clip" }
+          $timelineJob = Start-Process -FilePath $exe -ArgumentList @("--verify-timeline","test_output/gopro_12s.mp4","test_output/MOMENTO_three_segments.mp4") -WorkingDirectory (Get-Location).Path -Wait -PassThru
+          if ($timelineJob.ExitCode -ne 0) { throw "EXE normal/slow/normal timeline rendering failed: $($timelineJob.ExitCode)" }
+          if (!(Test-Path "test_output/MOMENTO_three_segments.mp4")) { throw "Three-segment MP4 missing" }
+          & $ffmpeg -hide_banner -loglevel error -i "test_output/MOMENTO_three_segments.mp4" -f null -
+          if ($LASTEXITCODE -ne 0) { throw "The three-segment MP4 cannot be decoded" }
+          Write-Host "Normal / slow / normal real-video rendering: PASSED"
       - uses: actions/upload-artifact@v4
         with:
           name: MOMENTO-Batch-SlowMo-Windows-EXE
@@ -74,7 +83,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "momento-batch-slowmo-v1.2"
+          $tag = "momento-batch-slowmo-v1.3"
           $asset = "dist/MOMENTO_Batch_SlowMo.exe"
           if (!(Test-Path $asset)) { throw "EXE missing" }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLower()
@@ -84,7 +93,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $files --repo $env:GITHUB_REPOSITORY --clobber
           } else {
-            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo v1.2 - 3 Controls + UI Fix" --notes "Windows 10/11 64-bit standalone. Fixed Tkinter progressbar startup crash. Three controls: slowdown START second, DURATION seconds, and SPEED 0.5x / 0.25x / 0.125x. Supports multiple clips and optional advanced intervals. FFmpeg included. Actual GUI startup and video rendering tested on Windows. Original files remain untouched." --latest=false
+            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo v1.3 - Normal-Slow-Normal Video" --notes "Windows 10/11 64-bit standalone. Fixed Windows GUI. Auto-calculate and manually override normal-speed ending; slow duration means FINAL playback seconds (same as MOMENTO Android). Three-stage normal, slow, normal timeline per video. GUI startup and video rendering tested. Supports multiple clips and optional advanced intervals. FFmpeg included. Actual GUI startup and video rendering tested on Windows. Original files remain untouched." --latest=false
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed" }
           Write-Host "Direct download: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/MOMENTO_Batch_SlowMo.exe"
