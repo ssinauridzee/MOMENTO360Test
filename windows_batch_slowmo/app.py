@@ -612,11 +612,13 @@ def _ui_selftest() -> int:
         assert app._current_spec() == '5-8@0.5'
         app.extra_intervals_var.set('9-10@0.25')
         assert app._current_spec() == '5-8@0.5; 9-10@0.25'
-        print('MOMENTO UI startup and three editing controls passed')
+        if sys.stdout is not None:
+            print('MOMENTO UI startup and three editing controls passed')
         return 0
     except Exception:
         import traceback
-        traceback.print_exc()
+        if sys.stderr is not None:
+            traceback.print_exc()
         return 1
     finally:
         if root is not None:
