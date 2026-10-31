@@ -69,7 +69,7 @@ class GoProMediaImporter(private val context: Context) {
         busy=false
         handler.post{cb(result)}
     }
-    fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean=false){
+    fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean=false,pendingCount:Int=1){
         if(busy){done(Result.failure(IllegalStateException("უკვე მიმდინარეობს GoPro-დან გადმოტანა")));return}
         busy=true;cancelled.set(false);finishOnce.set(false)
         status(progress,"GoPro Wi-Fi-ის ძებნა… თუ Android ქსელთან დაკავშირებას გთხოვს, დააჭირე Connect")
@@ -84,7 +84,7 @@ class GoProMediaImporter(private val context: Context) {
             }
             if(wifi!=null){
                 status(progress,"GoPro-ს Wi-Fi უკვე დაკავშირებულია — ვკითხულობ ვიდეოების სიას…")
-                doDownload(wifi,startedAt,progress,done,sequential);return@thread
+                doDownload(wifi,startedAt,progress,done,sequential,pendingCount);return@thread
             }
             status(progress,"ტელეფონი GoPro-ს Wi-Fi-ზე არ არის — Android-ს ვთხოვ კამერის ქსელზე გადასვლას…")
             val credentials=saved()
@@ -114,7 +114,7 @@ class GoProMediaImporter(private val context: Context) {
                             status(progress,"Wi-Fi დამყარდა; ველოდებით GoPro-ს ფაილების სერვერის მზადყოფნას…")
                             if(cancelled.get())
                                 finish(done,Result.failure(InterruptedException("გადმოტანა ახალი გადაღებისთვის შეჩერდა")))
-                            else doDownload(network,startedAt,progress,done,sequential)
+                            else doDownload(network,startedAt,progress,done,sequential,pendingCount)
                         }
                         override fun onUnavailable(){
                             finish(done,Result.failure(IllegalStateException(
@@ -128,7 +128,7 @@ class GoProMediaImporter(private val context: Context) {
             }
         }
     }
-    private fun doDownload(network:Network,startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean){
+    private fun doDownload(network:Network,startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean,pendingCount:Int){
         thread(name="momento-gopro-mp4"){
             val result=runCatching{
                 var problem:Exception?=null
@@ -140,19 +140,25 @@ class GoProMediaImporter(private val context: Context) {
                         status(progress,"GoPro-ს ვიდეოების რიგის შემოწმება $attempt/18…")
                     try {
                         val items=listMedia(network)
-                        val candidates=items.filter{item ->
-                            if(startedAt>0L && item.mod>0L &&
-                                item.mod*1000L < startedAt-30000L)return@filter false
-                            if(sequential && item.fingerprint in alreadyDelivered)return@filter false
-                            true
-                        }
+                        // HERO9 modified timestamps are NOT guaranteed to match the
+                        // phone clock (drift, timezone, wrong camera clock). Do not
+                        // reject all clips based on an arbitrary 30-second cutoff.
+                        val remaining=items.filter { it.fingerprint !in alreadyDelivered }
+                            .sortedWith(compareBy<Media>{it.mod}.thenBy{it.dir}.thenBy{it.name})
+                        // The newest N not-yet-delivered short clips belong to N
+                        // queued captures; deliver those oldest-first. This avoids
+                        // accidentally selecting an ancient video from microSD.
+                        // Operators should verify the newest N files when recovering
+                        // a historic queue after external captures.
                         chosen=if(sequential) {
-                            // Stop timestamps identify the session; selecting the oldest not-yet-
-                            // delivered recent clip prevents later guests being mistaken for older ones.
-                            candidates.minWithOrNull(compareBy<Media>{it.mod}.thenBy{it.dir}.thenBy{it.name})
+                            remaining.takeLast(pendingCount.coerceIn(1,300)).firstOrNull()
                         } else {
-                            candidates.maxWithOrNull(compareBy<Media>{it.mod}.thenBy{it.dir}.thenBy{it.name})
+                            remaining.lastOrNull()
                         }
+                        if(attempt==1)status(progress,
+                            "GoPro-ზე MP4: ${items.size}, უკვე გადმოტანილი: ${items.size-remaining.size}, " +
+                            "ჩვენი რიგი: ${pendingCount}. " +
+                            (chosen?.let{"არჩეული: ${it.name}"} ?: "მოსაძებნია ახალი MP4"))
                         if(chosen!=null)break
                     } catch(e:Exception){problem=e}
                     Thread.sleep(1300L)
