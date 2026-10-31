@@ -1,7 +1,7 @@
-name: MOMENTO 360 v1.4 Automatic SMS APK
+name: MOMENTO 360 v1.5 Capture Queue APK
 on:
   push:
-    branches: [momento360-v1.4-auto-sms]
+    branches: [momento360-v1.5-capture-queue]
   workflow_dispatch:
 jobs:
   build:
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-v1.4-AutoSMS-APK
+          name: MOMENTO360-v1.5-CaptureQueue-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
