@@ -744,6 +744,24 @@ def _verify_from_commandline(args: list[str]) -> int:
         return 1
 
 
+def _verify_full_timeline(args: list[str]) -> int:
+    """Real MP4 smoke test: first 5s normal, 7s slow, last 3.5s normal."""
+    if len(args) != 2:
+        return 2
+    source, target = map(Path, args)
+    try:
+        ffmpeg = ffmpeg_path()
+        source_duration = probe_duration(ffmpeg, source)
+        timeline = plan_timeline(source_duration, 5, 7, 0.5)
+        render(source, target, list(timeline.segments), ffmpeg=ffmpeg, fps=60)
+        result = probe_duration(ffmpeg, target)
+        if abs(result - timeline.final_seconds) > 0.5:
+            return 3
+        return 0
+    except Exception:
+        return 1
+
+
 def _ui_selftest() -> int:
     """Actually instantiate Windows Tk UI and exercise normal/slow/normal settings."""
     root = None
@@ -791,6 +809,8 @@ def _ui_selftest() -> int:
 
 
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == '--verify-timeline':
+        return _verify_full_timeline(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == '--ui-selftest':
         return _ui_selftest()
     if len(sys.argv) > 1 and sys.argv[1] == '--verify':
