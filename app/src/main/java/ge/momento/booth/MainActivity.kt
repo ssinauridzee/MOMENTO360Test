@@ -767,6 +767,170 @@ class MainActivity : Activity() {
         }
     }
 
+    /** STOP acknowledged by the HERO9: the original stays on microSD. */
+    private fun captureStoppedSuccessfully() {
+        val id=captureStartedAtMs
+        if(id<=0L)return
+        try {
+            captures.add(id,selectedPlan ?: plan())
+            state.text="✅ ვიდეო GoPro-ზე შენახულია. ახალი START შეგიძლია დაუყოვნებლივ."
+            showCaptureShareDialog(id)
+            updatePendingLabel()
+            pumpCapturedVideos()
+        }catch(e:Exception){
+            state.text="ვიდეო GoPro-ზეა, მაგრამ ადგილობრივ რიგში ვერ ჩაიწერა: ${e.message}"
+            Toast.makeText(this,state.text,Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Prioritise the shutter: pause a large Wi-Fi copy and keep its .partial bytes. */
+    private fun interruptDownloadForNextCapture() {
+        if(queuedImportId!=null) {
+            downloadGeneration++
+            importer.pause()
+            queuedImportId=null
+            importingFromGoPro=false
+            importStatus.text="📥 ჩამოტვირთვა შეჩერებულია ახალი გადაღებისთვის; განახლდება STOP-ის შემდეგ."
+        }
+    }
+
+    /** FIFO: one GoPro import / Media3 export at a time; never blocks a new START. */
+    private fun pumpCapturedVideos() {
+        if(!::captures.isInitialized || isFinishing || isDestroyed ||
+            recording || busy || pending360 || syncing360 ||
+            importingFromGoPro || importer.isBusy() || exporting) return
+        val job=captures.oldest() ?: return
+        if(System.currentTimeMillis()<job.retryAfter)return
+        val raw=job.localRaw(filesDir)
+        if(raw!=null) startQueuedExport(job,raw)
+        else startQueuedImport(job)
+    }
+
+    private fun startQueuedImport(job:CaptureQueue.Job) {
+        if(!wifiPermissionGranted())return
+        importingFromGoPro=true
+        val generation=++downloadGeneration
+        queuedImportId=job.id
+        refresh()
+        importStatus.text="📥 რიგში №1 — GoPro-ს MP4-ის ჩამოტვირთვა. START ნებისმიერ დროს შეგიძლია."
+        fun releaseIfCurrent() {
+            if(downloadGeneration==generation && queuedImportId==job.id) {
+                queuedImportId=null
+                importingFromGoPro=false
+                refresh()
+            }
+        }
+        val beginDownload:()->Unit = begin@{
+            if(downloadGeneration!=generation)return@begin
+            if(recording || busy || pending360 || syncing360) {
+                releaseIfCurrent()
+                return@begin
+            }
+            if(importer.saved()==null) {
+                releaseIfCurrent()
+                importStatus.text="GoPro Wi-Fi პაროლი მიუთითე ერთხელ"
+                showWifiCredentialsDialog(true)
+                return@begin
+            }
+            if(importer.isBusy()) {
+                releaseIfCurrent()
+                return@begin
+            }
+            importer.downloadLatest(job.id,
+                { msg ->
+                    if(downloadGeneration==generation && !recording) {
+                        importStatus.text=msg
+                        android.util.Log.d("MOMENTO-Queue",msg)
+                    }
+                },
+                { result ->
+                    if(downloadGeneration!=generation) {
+                        // A newer START interrupted this worker. Do not assign a stale
+                        // video to the newer guest and do not erase the queued job.
+                        pumpCapturedVideos()
+                    } else {
+                        releaseIfCurrent()
+                        result.onSuccess { file ->
+                            runCatching { captures.downloaded(job.id,file) }.onFailure { error ->
+                                captures.retryLater(job.id,error.message ?: "ფაილის შენახვა")
+                                captureQueueError=error.message ?: "რიგის შეცდომა"
+                            }
+                            importStatus.text="📥 ${file.name} ჩამოტანილია; მუშავდება Slow Motion."
+                        }.onFailure { error ->
+                            captures.retryLater(job.id,error.message ?: "GoPro-ის კავშირი")
+                            captureQueueError=error.message ?: "GoPro-ის კავშირი"
+                            importStatus.text="⚠ ვიდეო GoPro-ს microSD-ზეა. ხელახალი ცდა: ${captureQueueError}"
+                        }
+                        refresh()
+                        pumpCapturedVideos()
+                    }
+                },
+                sequential=true)
+        }
+        if(connected) {
+            ble.enableWifiAp { ok -> runOnUiThread {
+                if(downloadGeneration!=generation)return@runOnUiThread
+                if(!ok) {
+                    beginDownload()
+                } else {
+                    ble.readWifiCredentials { ssid,password -> runOnUiThread {
+                        if(downloadGeneration!=generation)return@runOnUiThread
+                        if(!ssid.isNullOrBlank() && !password.isNullOrBlank())
+                            runCatching { importer.save(ssid,password) }
+                        handler.postDelayed({ beginDownload() },750L)
+                    } }
+                }
+            } }
+        } else {
+            beginDownload()
+        }
+    }
+
+    private fun startQueuedExport(job:CaptureQueue.Job,source:File) {
+        exporting=true
+        refresh()
+        mediaLabel.text="Slow Motion: ${source.name} მუშავდება — ახალი გადაღება დაშვებულია."
+        exporter.export(Uri.fromFile(source),job.plan,
+            { message ->
+                mediaLabel.text=message
+            },
+            { result ->
+                exporting=false
+                result.onSuccess { file ->
+                    try {
+                        // Persist guest-specific identity BEFORE removing the capture job.
+                        guestDelivery.attachFile(job.id,file)
+                        preparedVideos.add(file)
+                        captures.remove(job.id)
+                        if(!recording && captureStartedAtMs==job.id) {
+                            outputFile=file
+                            api.saveExportedFile(file)
+                        }
+                        GalleryPublisher.publish(this@MainActivity,file) { published ->
+                            if(!recording && captureStartedAtMs==job.id) {
+                                mediaLabel.text=published.fold(
+                                    { "Slow Motion შენახულია: $it" },
+                                    { "MP4 მზადაა, გალერეაში შენახვა ვერ მოხერხდა: ${it.message}" })
+                            }
+                        }
+                        captureQueueError=""
+                        mediaLabel.text="✅ Slow Motion MP4 მზადაა: ${file.name}"
+                        autoProcessQueues()
+                    } catch(e:Exception) {
+                        captures.retryLater(job.id,e.message ?: "რიგის შენახვა")
+                        captureQueueError=e.message ?: "რიგის შენახვა"
+                        mediaLabel.text="⚠ MP4 შეიქმნა, მაგრამ რიგში ვერ დაემატა: ${captureQueueError}"
+                    }
+                }.onFailure { e ->
+                    captures.retryLater(job.id,e.message ?: "Slow Motion შეცდომა")
+                    captureQueueError=e.message ?: "Slow Motion შეცდომა"
+                    mediaLabel.text="⚠ Slow Motion ვერ დასრულდა. ვიდეო GoPro-ზე და ტელეფონში დაცულია: ${captureQueueError}"
+                }
+                refresh()
+                pumpCapturedVideos()
+            })
+    }
+
     /**
      * Prompt immediately on GoPro STOP confirmation, before download/export/upload.
      * Every phone number belongs to one capture ID and later to one private MP4.
