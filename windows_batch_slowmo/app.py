@@ -19,7 +19,7 @@ import webbrowser
 
 from processor import (
     Cancelled, SlowSegment, SUPPORTED_EXTENSIONS, choose_output_name,
-    ffmpeg_path, parse_segments, probe_duration, render, result_duration,
+    ffmpeg_path, parse_seconds, parse_segments, probe_duration, render, result_duration,
     validate_duration,
 )
 
@@ -84,7 +84,9 @@ class SlowMoApp:
                      font=(FONT, 10, 'bold'), padding=(8, 9), relief='flat')
         st.map('Momento.Treeview', background=[('selected', '#2B6482')],
                foreground=[('selected', TEXT)])
-        st.configure('Momento.TProgressbar', background=ACCENT, troughcolor=PANEL2,
+        # Always style Tk's builtin progressbar layout; a new custom name
+        # without a layout crashed the app on Windows (TclError).
+        st.configure('Horizontal.TProgressbar', background=ACCENT, troughcolor=PANEL2,
                      bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT, thickness=13)
         st.configure('Momento.TCombobox', fieldbackground='#243852',
                      background='#243852', foreground=TEXT, padding=6)
@@ -200,10 +202,10 @@ class SlowMoApp:
         self.stop_button.config(state=tk.DISABLED)
         self.progress_text = self._label(footer, 'ვიდეო: 0% • ყველა: 0%', 10, MUTED)
         self.progressbar = ttk.Progressbar(footer, variable=self.file_progress_var,
-                                            style='Momento.TProgressbar', maximum=100)
+                                            style='Horizontal.TProgressbar', orient=tk.HORIZONTAL, maximum=100)
         self.progressbar.pack(fill=tk.X, pady=(4, 6))
         self.totalbar = ttk.Progressbar(footer, variable=self.global_progress_var,
-                                       style='Momento.TProgressbar', maximum=100)
+                                       style='Horizontal.TProgressbar', orient=tk.HORIZONTAL, maximum=100)
         self.totalbar.pack(fill=tk.X, pady=(0, 4))
         self.message = tk.Label(footer, textvariable=self.status_var, bg=BG,
                                 fg=ACCENT, font=(FONT, 10), anchor='w', justify='left')
