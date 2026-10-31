@@ -39,6 +39,10 @@ class MainActivity : Activity() {
     private lateinit var api: Momento360Api
     private lateinit var pendingUploads: PendingUploadQueue
     private lateinit var preparedVideos: PreparedVideoQueue
+    private lateinit var guestDelivery: GuestDeliveryQueue
+    private var sendingSms = false
+    private var promptedCaptureId = 0L
+    private var lastSmsResult = ""
     private var reservingPrepared = false
     private var retryLoop: Runnable? = null
     private lateinit var pendingLabel: TextView
@@ -95,6 +99,7 @@ class MainActivity : Activity() {
         importer = GoProMediaImporter(this)
         pendingUploads = PendingUploadQueue(this)
         preparedVideos = PreparedVideoQueue(this)
+        guestDelivery = GuestDeliveryQueue(this)
         session = api.getSession()
         outputFile = api.getExportedFile()
         ble = GoProBle(this,
@@ -576,7 +581,7 @@ class MainActivity : Activity() {
                             mediaLabel.text="GoPro-დან გადმოტანილია: "+file.name+". იწყება MP4 დამუშავება…"
                             importStatus.text="გადმოტანილია • "+file.name
                             refresh()
-                            exportSelected()
+                            exportSelected(if (automatic) captureStartedAtMs else null)
                         }.onFailure{error->
                             importStatus.text="GoPro გადმოტანა ვერ შესრულდა: "+error.message
                             state.text="კამერის ორიგინალი microSD-ზე უსაფრთხოდაა შენახული"
@@ -739,6 +744,7 @@ class MainActivity : Activity() {
                 recording=!ok
                 if (ok) {
                     state.text="GoPro გადაღება დასრულდა. იწყება microSD-დან გადმოტანა…"
+                    showCaptureShareDialog(captureStartedAtMs)
                     startGoProImport(true)
                 } else state.text="GoPro STOP ვერ დადასტურდა — გადაამოწმე კამერა"
                 refresh()
@@ -762,6 +768,7 @@ class MainActivity : Activity() {
 
     /** Continue after an offline GoPro session without losing earlier guests' videos. */
     private fun autoProcessQueues() {
+        if (::guestDelivery.isInitialized) pumpQueuedSms()
         if (!::preparedVideos.isInitialized || !::pendingUploads.isInitialized ||
             uploading || reservingLink || reservingPrepared || recording || exporting ||
             importingFromGoPro || busy || isFinishing) return
@@ -781,6 +788,7 @@ class MainActivity : Activity() {
             outcome.onSuccess { s ->
                 try {
                     pendingUploads.add(s,file)
+                    guestDelivery.attachSession(file.name,s)
                     preparedVideos.remove(file)
                     if (outputFile?.absolutePath == file.absolutePath) {
                         session=s
@@ -838,6 +846,7 @@ class MainActivity : Activity() {
         val file = outputFile ?: run { Toast.makeText(this,"ჯერ დაამუშავე და შექმენი MP4",Toast.LENGTH_SHORT).show(); return }
         try {
             pendingUploads.add(s, file)
+            guestDelivery.attachSession(file.name,s)
             updatePendingLabel()
             uploadNextPending()
         } catch (e: Exception) {
@@ -865,6 +874,8 @@ class MainActivity : Activity() {
             uploading = false
             result.onSuccess { url ->
                 pendingUploads.remove(job.session.token)
+                guestDelivery.markUploaded(job.session.token)
+                pumpQueuedSms()
                 if (session?.token == job.session.token)
                     linkStatus.text = "ვიდეო ატვირთულია და ხელმისაწვდომია! 💖\n$url"
                 updatePendingLabel()
@@ -881,7 +892,10 @@ class MainActivity : Activity() {
     private fun updatePendingLabel() {
         if (::pendingLabel.isInitialized)
             pendingLabel.text = (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
-                "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო. არ წაშალო აპლიკაცია."
+                "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო.\n" +
+                "SMS გაგზავნის მოლოდინში: ${guestDelivery.pendingCount()}." +
+                (if(lastSmsResult.isNotBlank()) "\n"+lastSmsResult else "") +
+                "\nაპლიკაცია არ წაშალო, სანამ რიგები დაცარიელდება."
     }
 
     private fun openShareDialog() {
@@ -1007,6 +1021,7 @@ class MainActivity : Activity() {
         videoInput = null
         linkStatus.text = "ახალი სტუმარი: ბმული შეიქმნება გადაღების დასრულებისას."
         val p = plan(); selectedPlan = p
+        captureStartedAtMs = System.currentTimeMillis()
         getSharedPreferences("momento_preview", MODE_PRIVATE).edit()
             .putInt("total", p.finalSeconds).putInt("from", p.slowStartSeconds)
             .putInt("slow", p.slowSeconds)
@@ -1028,8 +1043,8 @@ class MainActivity : Activity() {
                 videoInput = Uri.fromFile(file)
                 mediaLabel.text = "კამერის Wi-Fi ნაკადი ჩაიწერა: ${file.name}. იწყება MP4 დამუშავება…"
                 refresh()
-                reserveLink()
-                exportSelected()
+                showCaptureShareDialog(captureStartedAtMs)
+                exportSelected(captureStartedAtMs)
             }.onFailure { e ->
                 mediaLabel.text = "ვიდეო არ ჩაიწერა. ${e.message}"
                 state.text = "SD-ის გარეშე რეჟიმი ვერ შესრულდა. გადამოწმე Wi-Fi ან კამერის მხარდაჭერა."
@@ -1058,10 +1073,13 @@ class MainActivity : Activity() {
             if (ok) recording = false
             state.text = if (ok) "გადაღება დასრულდა. ფაილი GoPro-ის SD ბარათზეა." else "STOP ვერ დადასტურდა — გადაამოწმე კამერა და სცადე STOP ხელახლა"
             refresh()
-            if (ok) startGoProImport(true)
+            if (ok) {
+                showCaptureShareDialog(captureStartedAtMs)
+                startGoProImport(true)
+            }
         } }
     }
-    private fun exportSelected() {
+    private fun exportSelected(captureId:Long? = null) {
         val uri = videoInput ?: return
         if (exporting) return
         exporting = true
@@ -1084,6 +1102,10 @@ class MainActivity : Activity() {
                                 mediaLabel.text="MP4 დამუშავებულია და აპში ინახება, მაგრამ გალერეაში ვერ შეინახა: ${e.message}"
                             }
                         }
+                    }
+                    if (captureId != null && captureId > 0L) {
+                        runCatching { guestDelivery.attachFile(captureId,file) }
+                            .onFailure { e -> lastSmsResult = "SMS რიგის შეცდომა: " + e.message }
                     }
                     queuePrepared(file)
                 }
