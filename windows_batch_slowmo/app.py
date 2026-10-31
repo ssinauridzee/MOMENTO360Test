@@ -535,13 +535,21 @@ class SlowMoApp:
     def open_drive(self):
         webbrowser.open('https://drive.google.com/drive/u/0/my-drive')
 
+    def _row_values(self, item: VideoItem):
+        return (
+            item.path.name,
+            f'{item.duration:.2f} წმ' if item.duration is not None else '...',
+            item.segments or '...',
+            f'{item.tail_seconds:g} წმ' if item.tail_seconds is not None else '...',
+            f'{item.expected_duration:.1f} წმ'
+                if item.expected_duration is not None else '...',
+            item.status,
+        )
+
     def _refresh_row(self, key: str):
         if key not in self.items or not self.tree.exists(key):
             return
-        item = self.items[key]
-        self.tree.item(key, values=(item.path.name,
-            f'{item.duration:.2f} წმ' if item.duration else '...',
-            item.segments, item.status))
+        self.tree.item(key, values=self._row_values(self.items[key]))
 
     def start(self):
         if self.busy:
