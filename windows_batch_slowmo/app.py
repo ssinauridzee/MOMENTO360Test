@@ -470,26 +470,36 @@ class SlowMoApp:
     def _select_item(self, event=None):
         selected = self.tree.selection()
         if len(selected) == 1 and selected[0] in self.items:
-            self._show_settings_for_spec(self.items[selected[0]].segments)
+            self._show_settings_for_item(self.items[selected[0]])
 
     def _apply(self, keys):
         if self.busy:
             return
         try:
-            spec = self._current_spec()
-            segments = parse_segments(spec)
+            settings = self._current_settings()
+            # Validate ALL clips before changing any assignment. When several
+            # sources have different durations, their normal tails can differ.
             for key in keys:
                 item = self.items[key]
                 if item.duration is not None:
-                    validate_duration(segments, item.duration)
+                    try:
+                        plan_timeline(item.duration, *settings)
+                    except ValueError as exc:
+                        raise ValueError(f'{item.path.name}: {exc}') from exc
         except ValueError as e:
-            messagebox.showerror('შენელების შეცდომა', str(e))
+            messagebox.showerror('შენელების პარამეტრები', str(e))
             return
         for key in keys:
-            self.items[key].segments = spec
-            self._refresh_row(key)
+            item = self.items[key]
+            item.settings = settings
+            item.output = None
+            item.output_duration = None
+            self._replan(key)
         self._settings_dirty = False
-        self.status_var.set(f'შენელების პარამეტრები მიენიჭა {len(keys)} ვიდეოს.')
+        self._update_segment_preview()
+        self.status_var.set(
+            f'{len(keys)} ვიდეოს მიენიჭა შენელების და ჩვეულებრივი '
+            'დასასრულის პარამეტრები.')
 
     def apply_selected(self):
         selection = [key for key in self.tree.selection() if key in self.items]
