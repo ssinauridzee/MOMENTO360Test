@@ -591,7 +591,41 @@ def _verify_from_commandline(args: list[str]) -> int:
         return 1
 
 
+def _ui_selftest() -> int:
+    """Headless-command-mode health check: actually builds the Tk GUI on Windows.
+
+    Prevents another release whose CLI video processing works but whose
+    progressbar/style fails before the window becomes visible.
+    """
+    root = None
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        app = SlowMoApp(root)
+        root.update_idletasks()
+        assert app.progressbar.winfo_exists()
+        assert app.totalbar.winfo_exists()
+        assert app._current_spec() == '3-5@0.25'
+        app.slow_start_var.set('5')
+        app.slow_length_var.set('3')
+        app.slow_speed_var.set('0.5× — 2-ჯერ ნელა')
+        assert app._current_spec() == '5-8@0.5'
+        app.extra_intervals_var.set('9-10@0.25')
+        assert app._current_spec() == '5-8@0.5; 9-10@0.25'
+        print('MOMENTO UI startup and three editing controls passed')
+        return 0
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        if root is not None:
+            root.destroy()
+
+
 def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == '--ui-selftest':
+        return _ui_selftest()
     if len(sys.argv) > 1 and sys.argv[1] == '--verify':
         return _verify_from_commandline(sys.argv[2:])
     root = tk.Tk()
