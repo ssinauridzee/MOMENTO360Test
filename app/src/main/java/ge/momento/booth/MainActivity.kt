@@ -845,8 +845,13 @@ class MainActivity : Activity() {
                 },
                 { result ->
                     if(downloadGeneration!=generation) {
-                        // A newer START interrupted this worker. Do not assign a stale
-                        // video to the newer guest and do not erase the queued job.
+                        // If copy completed just before interruption, persist its raw
+                        // MP4 for THIS capture even though a newer START is underway.
+                        // Never discard a successful download solely due to UI generation.
+                        result.onSuccess { file ->
+                            runCatching { captures.downloaded(job.id,file) }
+                                .onFailure { captureQueueError=it.message ?: "რიგის შენახვა" }
+                        }
                         pumpCapturedVideos()
                     } else {
                         releaseIfCurrent()
