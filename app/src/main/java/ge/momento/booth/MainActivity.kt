@@ -754,6 +754,84 @@ class MainActivity : Activity() {
         }
     }
 
+    /**
+     * Prompt immediately on GoPro STOP confirmation, before download/export/upload.
+     * Every phone number belongs to one capture ID and later to one private MP4.
+     */
+    private fun showCaptureShareDialog(captureId:Long) {
+        if(captureId<=0L || promptedCaptureId==captureId || isFinishing) return
+        promptedCaptureId=captureId
+        val fields=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL
+            setPadding(dp(20),dp(10),dp(20),dp(6))
+        }
+        val phone=EditText(this).apply {
+            hint="სტუმრის ნომერი: 5XXXXXXXX"
+            inputType=InputType.TYPE_CLASS_PHONE
+            setSingleLine(true)
+            fields.addView(this)
+        }
+        val name=EditText(this).apply {
+            hint="სახელი (არასავალდებულო)"
+            inputType=InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
+            setSingleLine(true)
+            fields.addView(this)
+        }
+        val dialog=AlertDialog.Builder(this)
+            .setTitle("✅ გადაღება დასრულდა — გაზიარება")
+            .setMessage("სტუმრის ნომერი შეიყვანე ახლავე. SMS ავტომატურად გაიგზავნება მხოლოდ ამ ვიდეოს Google Drive-ზე წარმატებით ატვირთვის შემდეგ. ვიდეო პარალელურად დამუშავდება.")
+            .setView(fields)
+            .setPositiveButton("SMS — დადასტურება",null)
+            .setNeutralButton("ბმული / QR მოგვიანებით",{_,_->
+                Toast.makeText(this,"ვიდეო ატვირთვის შემდეგ ბმულითაც იქნება ხელმისაწვდომი.",Toast.LENGTH_LONG).show()
+            })
+            .setNegativeButton("SMS-ის გამოტოვება",null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                try {
+                    guestDelivery.recordPhone(captureId,phone.text.toString(),name.text.toString())
+                    lastSmsResult="📱 ნომერი შენახულია. SMS დაიგზავნება ატვირთვის დასრულების შემდეგ."
+                    updatePendingLabel()
+                    pumpQueuedSms()
+                    Toast.makeText(this,"ნომერი მიება ვიდეოს. SMS ატვირთვის შემდეგ გაიგზავნება.",Toast.LENGTH_LONG).show()
+                    dialog.dismiss()
+                } catch(e:Exception) {
+                    phone.error=e.message ?: "შეამოწმე ნომერი"
+                }
+            }
+        }
+        dialog.show()
+    }
+
+    /**
+     * Do not block the shutter while SMS is in flight. A session is immutable:
+     * its token and phone are read from the persistent queue, not from the UI.
+     */
+    private fun pumpQueuedSms() {
+        if(!::guestDelivery.isInitialized || sendingSms || isFinishing) return
+        val ticket=runCatching { guestDelivery.claimReady() }.getOrNull() ?: return
+        sendingSms=true
+        val smsSession=Momento360Api.Session(ticket.token,"",ticket.url)
+        api.sendSms(smsSession,ticket.name,ticket.phone) { result ->
+            sendingSms=false
+            result.onSuccess { accepted ->
+                if(accepted) {
+                    guestDelivery.markSent(ticket.id)
+                    lastSmsResult="✅ SMSOffice-მა ვიდეოს ბმული გასაგზავნად მიიღო."
+                } else {
+                    guestDelivery.retryLater(ticket.id,"SMSOffice-მა SMS არ დაადასტურა")
+                    lastSmsResult="⚠ SMSOffice-მა SMS ვერ დაადასტურა. გაიმეორებს ავტომატურად."
+                }
+            }.onFailure { e ->
+                guestDelivery.retryLater(ticket.id,e.message ?: "SMS შეცდომა")
+                lastSmsResult="⚠ SMS ვერ გაიგზავნა: " + (e.message ?: "შეცდომა") + ". განმეორდება."
+            }
+            updatePendingLabel()
+            handler.post { pumpQueuedSms() }
+        }
+    }
+
     /** Queue the processed MP4 before the network-dependent session reservation. */
     private fun queuePrepared(file:File) {
         try {
