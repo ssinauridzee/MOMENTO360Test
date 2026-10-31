@@ -387,7 +387,30 @@ class MainActivity : Activity() {
         Button(this).apply {
             text = "⟳ გადაუტვირთავი ვიდეოების ატვირთვის გაგრძელება"
             root.addView(this)
-            setOnClickListener { uploadNextPending() }
+            setOnClickListener {
+                captures.oldest()?.let { captures.retryNow(it.id) }
+                captureQueueError=""
+                if(!getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
+                    .getBoolean("approved",true)){
+                    showRecoveryConfirm()
+                } else {
+                    pumpCapturedVideos()
+                    autoProcessQueues()
+                }
+                Toast.makeText(this@MainActivity,"GoPro გადმოტანისა და ატვირთვის რიგები შემოწმდა",Toast.LENGTH_SHORT).show()
+            }
+        }
+        Button(this).apply {
+            text="📂 v1.5-დან გადაღებებისა და SMS ნომრების აღდგენა"
+            root.addView(this)
+            setOnClickListener {
+                val pick=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type="application/json"
+                    putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("application/json","text/plain","application/octet-stream"))
+                }
+                startActivityForResult(pick,904)
+            }
         }
         Button(this).apply {
             text = "ვიდეოს ბმულის შექმნა / ატვირთვის ხელახლა ცდა"
@@ -767,6 +790,23 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Ask before pairing an older queue with the newest N camera SD videos. */
+    private fun showRecoveryConfirm() {
+        val n=captures.count()
+        AlertDialog.Builder(this)
+            .setTitle("ძველი ვიდეოების უსაფრთხო აღდგენა")
+            .setMessage("აღსადგენია $n გადაღება. დაადასტურე, რომ GoPro-ს microSD-ზე ბოლო $n MP4 სწორედ ამ სტუმრების ვიდეოებია, ჩაწერილი იმავე რიგით.\n\nთუ შემდეგ სხვა ვიდეოებიც გადაიღე, ჯერ არ დაადასტურო — შეიძლება არასწორ სტუმარს არასწორი ვიდეო გაეგზავნოს.\n\nGoPro ჩართული და მის Wi-Fi-ზე დაკავშირების შესაძლებლობა უნდა იყოს.")
+            .setPositiveButton("დიახ, ბოლო $n ვიდეო სწორია"){_,_->
+                getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
+                    .edit().putBoolean("approved",true).apply()
+                captures.oldest()?.let{captures.retryNow(it.id)}
+                captureQueueError=""
+                pumpCapturedVideos()
+            }
+            .setNegativeButton("ჯერ არა",null)
+            .show()
+    }
+
     /** STOP acknowledged by the HERO9: the original stays on microSD. */
     private fun captureStoppedSuccessfully() {
         val id=captureStartedAtMs
@@ -799,6 +839,8 @@ class MainActivity : Activity() {
         if(!::captures.isInitialized || isFinishing || isDestroyed ||
             recording || busy || pending360 || syncing360 ||
             importingFromGoPro || importer.isBusy() || exporting) return
+        if (!getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
+            .getBoolean("approved",true)) return
         val job=captures.oldest() ?: return
         if(System.currentTimeMillis()<job.retryAfter)return
         val raw=job.localRaw(filesDir)
@@ -870,7 +912,8 @@ class MainActivity : Activity() {
                         pumpCapturedVideos()
                     }
                 },
-                sequential=true)
+                sequential=true,
+                pendingCount=captures.all().count { it.localRaw(filesDir)==null })
         }
         if(connected) {
             ble.enableWifiAp { ok -> runOnUiThread {
@@ -1156,6 +1199,8 @@ class MainActivity : Activity() {
                 (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
                 "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო.\n" +
                 "SMS გაგზავნის მოლოდინში: ${guestDelivery.pendingCount()}." +
+                (if(captureQueueError.isNotBlank()) "\n⚠ GoPro რიგის შეცდომა: "+captureQueueError else "") +
+                (captures.oldest()?.error?.takeIf{it.isNotBlank()}?.let{"\nბოლო შეცდომა: "+it} ?: "") +
                 (if(lastSmsResult.isNotBlank()) "\n"+lastSmsResult else "") +
                 "\nაპლიკაცია არ წაშალო, სანამ რიგები დაცარიელდება."
     }
@@ -1390,6 +1435,34 @@ class MainActivity : Activity() {
                 outputFile = null
                 mediaLabel.text = "ვიდეო არჩეულია. მზად არის ექსპორტისთვის."
                 refresh()
+            }
+            904 -> {
+                try {
+                    val raw=contentResolver.openInputStream(uri)
+                        ?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}
+                        ?: error("სარეზერვო ფაილი ვერ გაიხსნა")
+                    require(raw.length<2000000){"სარეზერვო ფაილი ძალიან დიდია"}
+                    val root=org.json.JSONObject(raw)
+                    require(root.optInt("version")==1){"სარეზერვო ფაილის ვერსია არასწორია"}
+                    val oldCaptures=root.getJSONArray("captures")
+                    val oldGuests=root.getJSONArray("guests")
+                    val count=captures.restoreFromBackup(oldCaptures.toString())
+                    val guestCount=if(oldGuests.length()>0)
+                        guestDelivery.restoreFromBackup(oldGuests.toString())
+                        else 0
+                    getSharedPreferences("momento_recovery_v16",MODE_PRIVATE)
+                        .edit().putBoolean("approved",false).apply()
+                    updatePendingLabel()
+                    AlertDialog.Builder(this)
+                        .setTitle("ძველი რიგი აღდგენილია")
+                        .setMessage("დაემატა $count ვიდეო და $guestCount სტუმრის ჩანაწერი.\n\nმნიშვნელოვანია: გადაამოწმე, რომ GoPro-ს ბოლო ვიდეოები ამ სტუმრებისაა, სანამ SMS-ის ავტომატურ გაგზავნას ჩართავ.\n\nძველი v1.5 არ წაშალო, სანამ აღდგენას ბოლომდე არ გადაამოწმებ.")
+                        .setPositiveButton("შემოწმება"){_,_->showRecoveryConfirm()}
+                        .setNegativeButton("მოგვიანებით",null).show()
+                } catch(e:Exception) {
+                    AlertDialog.Builder(this).setTitle("აღდგენა ვერ შესრულდა")
+                        .setMessage(e.message ?: "არასწორი JSON ფაილი")
+                        .setPositiveButton("გასაგებია",null).show()
+                }
             }
             903 -> {
                 val file = lastPreviewFile ?: return
