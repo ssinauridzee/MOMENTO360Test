@@ -318,9 +318,9 @@ class SlowMoApp:
     def _add_paths(self, paths: list[Path]):
         new = []
         try:
-            parse_segments(self.interval_var.get())
+            spec = self._current_spec()
         except ValueError as e:
-            messagebox.showerror('ინტერვალის შეცდომა', str(e))
+            messagebox.showerror('შენელების პარამეტრები', str(e))
             return
         for path in paths:
             if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.is_file():
@@ -328,7 +328,7 @@ class SlowMoApp:
             key = str(path.resolve()).lower()
             if key in self.items:
                 continue
-            item = VideoItem(path.resolve(), self.interval_var.get().strip())
+            item = VideoItem(path.resolve(), spec)
             self.items[key] = item
             self.tree.insert('', 'end', iid=key,
                              values=(path.name, '...', item.segments, item.status))
@@ -358,13 +358,13 @@ class SlowMoApp:
     def _select_item(self, event=None):
         selected = self.tree.selection()
         if len(selected) == 1 and selected[0] in self.items:
-            self.interval_var.set(self.items[selected[0]].segments)
+            self._show_settings_for_spec(self.items[selected[0]].segments)
 
     def _apply(self, keys):
         if self.busy:
             return
-        spec = self.interval_var.get().strip()
         try:
+            spec = self._current_spec()
             segments = parse_segments(spec)
             for key in keys:
                 item = self.items[key]
