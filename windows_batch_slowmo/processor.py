@@ -25,6 +25,86 @@ class SlowSegment:
         return self.end - self.start
 
 
+
+@dataclass(frozen=True)
+class TimelinePlan:
+    """Source-to-output timeline in seconds, matching Android MOMENTO playback logic."""
+    segments: tuple[SlowSegment, ...]
+    intro: float
+    slow_source_seconds: float
+    slow_playback_seconds: float
+    outro: float
+    final_seconds: float
+
+
+def plan_timeline(
+    original_seconds: float, start_seconds: float, slow_playback_seconds: float,
+    speed: float, tail_seconds: float | None = None,
+    extras: Iterable[SlowSegment] = (),
+) -> TimelinePlan:
+    """Make a normal → slow → normal timeline for each ORIGINAL GoPro MP4.
+
+    - start_seconds is measured on the source timeline.
+    - slow_playback_seconds is the slow section's FINAL duration, as on Android.
+    - with tail_seconds=None the normal ending is calculated from source length.
+    - with a manually provided tail, the ending is fixed and the slow section
+      expands/contracts to fit the entire original, without discarding frames.
+      This intentionally takes priority over slow_playback_seconds.
+    """
+    values = (original_seconds, start_seconds, slow_playback_seconds, speed)
+    if not all(math.isfinite(x) for x in values):
+        raise ValueError('დრო და სიჩქარე უნდა იყოს სწორი რიცხვები.')
+    if original_seconds < 0.5:
+        raise ValueError('ორიგინალი ვიდეო ძალიან მოკლეა.')
+    if not 0 <= start_seconds < original_seconds:
+        raise ValueError(
+            f'შენელების დასაწყისი {start_seconds:g} წმ ვერ იქნება '
+            f'ორიგინალ ვიდეოში ({original_seconds:g} წმ).')
+    if slow_playback_seconds <= 0:
+        raise ValueError('შენელებული მონაკვეთი 0-ზე მეტი წამი უნდა იყოს.')
+    if speed not in (0.5, 0.25, 0.125):
+        raise ValueError('სიჩქარე უნდა იყოს 0.5×, 0.25× ან 0.125×.')
+    other = tuple(extras)
+    if tail_seconds is None:
+        used_source = slow_playback_seconds * speed
+        end_seconds = start_seconds + used_source
+        if end_seconds > original_seconds + 0.000001:
+            raise ValueError(
+                f'შენელებისთვის საჭიროა ორიგინალის {end_seconds:g} წამამდე '
+                f'მონაკვეთი, მაგრამ ვიდეო მხოლოდ {original_seconds:g} წმ-ია. '
+                'შეამცირე შენელებული მონაკვეთის ხანგრძლივობა.')
+    else:
+        if not math.isfinite(tail_seconds) or tail_seconds < 0:
+            raise ValueError('ჩვეულებრივი დასასრულის ხანგრძლივობა არასწორია.')
+        if other:
+            raise ValueError(
+                'ბოლო ჩვეულებრივი მონაკვეთის ხელით მითითებისას დამატებითი '
+                'შენელებები გამორთე (სხვა შემთხვევაში ინტერვალები დაიკვეთება).')
+        end_seconds = original_seconds - tail_seconds
+        if end_seconds <= start_seconds + 0.000001:
+            raise ValueError(
+                f'ორიგინალი {original_seconds:g} წმ-ია. '
+                f'დასაწყისი {start_seconds:g} წმ და ჩვეულებრივი ბოლო '
+                f'{tail_seconds:g} წმ არ ტოვებს ადგილს შენელებისთვის.')
+        used_source = end_seconds - start_seconds
+    primary = SlowSegment(start_seconds, end_seconds, speed)
+    all_segments = tuple(sorted((primary, *other), key=lambda seg: seg.start))
+    validate_duration(all_segments, original_seconds)
+    for prev, next_ in zip(all_segments, all_segments[1:]):
+        if prev.end > next_.start + 0.000001:
+            raise ValueError('შენელებული მონაკვეთები ერთმანეთს ფარავს.')
+    final_length = result_duration(original_seconds, all_segments)
+    after = max(0.0, original_seconds - max(seg.end for seg in all_segments))
+    return TimelinePlan(
+        all_segments, start_seconds, used_source,
+        used_source / speed, after, final_length)
+
+
+def format_segments(segments: Iterable[SlowSegment]) -> str:
+    return '; '.join(
+        f'{s.start:g}-{s.end:g}@{s.speed:g}' for s in segments)
+
+
 class Cancelled(Exception):
     pass
 
