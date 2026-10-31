@@ -209,6 +209,28 @@ class SlowMoApp:
         speed_menu.pack(fill=tk.X, pady=(0, 9))
         self.preview_label = self._label(right, '', 10, ACCENT, True, pady=(0, 9))
         self.preview_label.configure(textvariable=self.preview_var, wraplength=290)
+        self._label(right, '3. ბოლოს ჩვეულებრივად რამდენი წამი?', 11, TEXT, True,
+                    pady=(12, 5))
+        auto_radio = tk.Radiobutton(
+            right, text='ავტომატურად გამოთვალე (Android-ის მსგავსად)',
+            variable=self.tail_mode_var, value='auto', bg=PANEL, fg=TEXT,
+            selectcolor=PANEL2, activebackground=PANEL, activeforeground=TEXT,
+            font=(FONT, 9), anchor='w')
+        auto_radio.pack(fill=tk.X)
+        manual_radio = tk.Radiobutton(
+            right, text='მე მივუთითებ ბოლო ჩვეულებრივ წამებს',
+            variable=self.tail_mode_var, value='manual', bg=PANEL, fg=TEXT,
+            selectcolor=PANEL2, activebackground=PANEL, activeforeground=TEXT,
+            font=(FONT, 9), anchor='w')
+        manual_radio.pack(fill=tk.X, pady=(0, 3))
+        self.tail_entry = self._entry(right, self.tail_seconds_var)
+        self._label(right, 'ხელით მითითებისას შენელების ხანგრძლივობა '
+                    'ავტომატურად მოერგება ვიდეოს, რომ ბოლო წამები აუცილებლად '
+                    'ჩვეულებრივად გაგრძელდეს.', 9, MUTED, pady=(0, 9))
+        self.timeline_preview = self._label(right,
+            'ჯერ დაამატე GoPro-ს MP4, რომ დაითვალოს დასაწყისი / '
+            'შენელება / დასასრული.', 10, ACCENT, True, pady=(1, 9))
+        self.timeline_preview.configure(wraplength=300)
         self._label(right, 'დამატებითი მონაკვეთები (სურვილისამებრ)', 9, MUTED)
         self._entry(right, self.extra_intervals_var)
         self._label(right, 'მაგალითად: 8-9@0.5', 9, MUTED, pady=(0, 9))
