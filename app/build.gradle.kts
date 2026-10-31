@@ -1,6 +1,6 @@
 plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
 android { namespace = "ge.momento.booth"; compileSdk = 35
- defaultConfig { applicationId = "ge.momento.booth.goprowififix.v12"; minSdk = 26; targetSdk = 35; versionCode = 12; versionName = "1.2-auto-recovery" }
+ defaultConfig { applicationId = "ge.momento.booth.goprowififix.v13"; minSdk = 26; targetSdk = 35; versionCode = 13; versionName = "1.3-parallel-uploads" }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
 }
