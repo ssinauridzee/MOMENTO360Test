@@ -11,6 +11,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: momento-windows-batch-slowmo
+  cancel-in-progress: true
+
 jobs:
   windows-exe:
     runs-on: windows-latest
@@ -70,7 +74,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "momento-batch-slowmo-v1.1"
+          $tag = "momento-batch-slowmo-v1.2"
           $asset = "dist/MOMENTO_Batch_SlowMo.exe"
           if (!(Test-Path $asset)) { throw "EXE missing" }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLower()
@@ -80,7 +84,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $files --repo $env:GITHUB_REPOSITORY --clobber
           } else {
-            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo v1.1 - Windows UI Fixed" --notes "Windows 10/11 64-bit standalone. Fixed Tkinter progressbar startup crash. Three controls: slowdown START second, DURATION seconds, and SPEED 0.5x / 0.25x / 0.125x. Supports multiple clips and optional advanced intervals. FFmpeg included. Actual GUI startup and video rendering tested on Windows. Original files remain untouched." --latest=false
+            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo v1.2 - 3 Controls + UI Fix" --notes "Windows 10/11 64-bit standalone. Fixed Tkinter progressbar startup crash. Three controls: slowdown START second, DURATION seconds, and SPEED 0.5x / 0.25x / 0.125x. Supports multiple clips and optional advanced intervals. FFmpeg included. Actual GUI startup and video rendering tested on Windows. Original files remain untouched." --latest=false
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed" }
           Write-Host "Direct download: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/MOMENTO_Batch_SlowMo.exe"
