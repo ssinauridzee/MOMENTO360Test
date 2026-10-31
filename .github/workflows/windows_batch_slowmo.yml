@@ -28,9 +28,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller==6.16.0 imageio-ffmpeg==0.6.0
-      - name: Run engine unit tests
+      - name: Run engine unit tests and create the actual GUI
         run: |
           python -m unittest discover -s tests -v
+          python app.py --ui-selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Tkinter user interface cannot open' }
       - name: Bundle Windows FFmpeg into a portable EXE
         run: |
           $ffmpeg = (python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
@@ -49,6 +51,8 @@ jobs:
           & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=320x180:rate=60" -t 5 -c:v libx264 -pix_fmt yuv420p "test_output/gopro_input.mp4"
           if ($LASTEXITCODE -ne 0) { throw "Could not create test MP4" }
           $exe = (Resolve-Path ".\dist\MOMENTO_Batch_SlowMo.exe").Path
+          $ui = Start-Process -FilePath $exe -ArgumentList @('--ui-selftest') -WorkingDirectory (Get-Location).Path -Wait -PassThru
+          if ($ui.ExitCode -ne 0) { throw "Packaged Windows EXE UI startup failed: $($ui.ExitCode)" }
           $job = Start-Process -FilePath $exe -ArgumentList @("--verify","test_output/gopro_input.mp4","test_output/MOMENTO_test.mp4") -WorkingDirectory (Get-Location).Path -Wait -PassThru
           if ($job.ExitCode -ne 0) { throw "Windows EXE rendering test failed with exit code $($job.ExitCode)" }
           if (!(Test-Path "test_output/MOMENTO_test.mp4")) { throw "Rendered test video not found" }
@@ -66,7 +70,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "momento-batch-slowmo-v1.0"
+          $tag = "momento-batch-slowmo-v1.1"
           $asset = "dist/MOMENTO_Batch_SlowMo.exe"
           if (!(Test-Path $asset)) { throw "EXE missing" }
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLower()
@@ -76,7 +80,7 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $files --repo $env:GITHUB_REPOSITORY --clobber
           } else {
-            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo - Windows EXE" --notes "Portable Windows 10/11 64-bit program. Includes FFmpeg. Add multiple GoPro MP4 files, choose slow-motion intervals, export all processed videos to one folder for Google Drive sharing. Original videos remain unchanged. Built and smoke-tested on Windows." --latest=false
+            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo v1.1 - Windows UI Fixed" --notes "Windows 10/11 64-bit standalone. Fixed Tkinter progressbar startup crash. Three controls: slowdown START second, DURATION seconds, and SPEED 0.5x / 0.25x / 0.125x. Supports multiple clips and optional advanced intervals. FFmpeg included. Actual GUI startup and video rendering tested on Windows. Original files remain untouched." --latest=false
           }
           if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed" }
           Write-Host "Direct download: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/MOMENTO_Batch_SlowMo.exe"
