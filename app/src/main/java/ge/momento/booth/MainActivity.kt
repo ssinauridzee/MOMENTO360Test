@@ -401,13 +401,13 @@ class MainActivity : Activity() {
             }
         }
         Button(this).apply {
-            text="📂 v1.5-დან გადაღებებისა და SMS ნომრების აღდგენა"
+            text="📱 აღდგენა ტელეფონიდან — ვიდეოები / SMS ნომრები"
             root.addView(this)
             setOnClickListener {
                 val pick=Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
-                    type="application/json"
-                    putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("application/json","text/plain","application/octet-stream"))
+                    type="*/*"
+                    putExtra(Intent.EXTRA_MIME_TYPES,arrayOf("application/json","text/xml","application/xml","text/plain","application/octet-stream"))
                 }
                 startActivityForResult(pick,904)
             }
@@ -1440,27 +1440,63 @@ class MainActivity : Activity() {
                 try {
                     val raw=contentResolver.openInputStream(uri)
                         ?.bufferedReader(Charsets.UTF_8)?.use{it.readText()}
-                        ?: error("სარეზერვო ფაილი ვერ გაიხსნა")
+                        ?: error("ფაილი ვერ გაიხსნა")
                     require(raw.length<2000000){"სარეზერვო ფაილი ძალიან დიდია"}
-                    val root=org.json.JSONObject(raw)
-                    require(root.optInt("version")==1){"სარეზერვო ფაილის ვერსია არასწორია"}
-                    val oldCaptures=root.getJSONArray("captures")
-                    val oldGuests=root.getJSONArray("guests")
-                    val count=captures.restoreFromBackup(oldCaptures.toString())
+
+                    val capturesJson:String
+                    val guestsJson:String
+                    if(raw.trimStart().startsWith("<")) {
+                        // Android SharedPreferences XML exported from the old DEBUG
+                        // application by aShell You on this phone via Wireless Debugging.
+                        // XmlPullParser unescapes &quot;/&lt;/&amp; correctly.
+                        val parser=android.util.Xml.newPullParser()
+                        parser.setInput(java.io.StringReader(raw))
+                        val entries=HashMap<String,String>()
+                        var event=parser.eventType
+                        while(event!=org.xmlpull.v1.XmlPullParser.END_DOCUMENT) {
+                            if(event==org.xmlpull.v1.XmlPullParser.START_TAG &&
+                                parser.name=="string") {
+                                val name=parser.getAttributeValue(null,"name")
+                                if(name=="captures" || name=="jobs") {
+                                    entries[name]=parser.nextText()
+                                }
+                            }
+                            event=parser.next()
+                        }
+                        require(entries.isNotEmpty()) {
+                            "შეარჩიე MOMENTO_CAPTURES.xml ან MOMENTO_SMS.xml ძველი v1.5-დან"
+                        }
+                        capturesJson=entries["captures"] ?: "[]"
+                        guestsJson=entries["jobs"] ?: "[]"
+                    } else {
+                        val root=org.json.JSONObject(raw)
+                        require(root.optInt("version")==1) {
+                            "სარეზერვო JSON ფაილის ვერსია არასწორია"
+                        }
+                        capturesJson=root.optJSONArray("captures")?.toString() ?: "[]"
+                        guestsJson=root.optJSONArray("guests")?.toString() ?: "[]"
+                    }
+
+                    val oldCaptures=org.json.JSONArray(capturesJson)
+                    val oldGuests=org.json.JSONArray(guestsJson)
+                    require(oldCaptures.length()>0 || oldGuests.length()>0) {
+                        "ფაილში არც გადაღებებია და არც SMS ნომრები"
+                    }
+                    val count=if(oldCaptures.length()>0)
+                        captures.restoreFromBackup(oldCaptures.toString()) else 0
                     val guestCount=if(oldGuests.length()>0)
-                        guestDelivery.restoreFromBackup(oldGuests.toString())
-                        else 0
+                        guestDelivery.restoreFromBackup(oldGuests.toString()) else 0
                     getSharedPreferences("momento_recovery_v16",MODE_PRIVATE)
                         .edit().putBoolean("approved",false).apply()
                     updatePendingLabel()
                     AlertDialog.Builder(this)
-                        .setTitle("ძველი რიგი აღდგენილია")
-                        .setMessage("დაემატა $count ვიდეო და $guestCount სტუმრის ჩანაწერი.\n\nმნიშვნელოვანია: გადაამოწმე, რომ GoPro-ს ბოლო ვიდეოები ამ სტუმრებისაა, სანამ SMS-ის ავტომატურ გაგზავნას ჩართავ.\n\nძველი v1.5 არ წაშალო, სანამ აღდგენას ბოლომდე არ გადაამოწმებ.")
-                        .setPositiveButton("შემოწმება"){_,_->showRecoveryConfirm()}
-                        .setNegativeButton("მოგვიანებით",null).show()
+                        .setTitle("ძველი რიგი შემოტანილია")
+                        .setMessage("ამ ფაილიდან დაემატა $count ვიდეო და $guestCount სტუმრის ნომერი.\\n\\nთუ ტელეფონში ჯერ მხოლოდ ერთი XML ფაილი შემოიტანე, ახლა იგივე ღილაკიდან მეორე ფაილიც აირჩიე.\\n\\nდასრულების შემდეგ უნდა გადაამოწმო GoPro-ს ვიდეოების თანმიმდევრობა, რათა SMS არასწორ სტუმარს არ გაეგზავნოს.\\n\\nv1.5 არ წაშალო.")
+                        .setPositiveButton("გასაგებია",null)
+                        .show()
                 } catch(e:Exception) {
                     AlertDialog.Builder(this).setTitle("აღდგენა ვერ შესრულდა")
-                        .setMessage(e.message ?: "არასწორი JSON ფაილი")
+                        .setMessage(e.message ?: "არასწორი სარეზერვო ფაილი")
                         .setPositiveButton("გასაგებია",null).show()
                 }
             }
