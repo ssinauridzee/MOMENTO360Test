@@ -131,6 +131,14 @@ class CaptureQueue(private val context:Context) {
         return added
     }
 
+    @Synchronized fun retryNow(id:Long) {
+        val all=rows()
+        val item=all.firstOrNull { it.optLong("id")==id } ?: return
+        item.put("retryAfter",0L)
+        item.put("error","")
+        save(all)
+    }
+
     @Synchronized fun remove(id:Long) {
         save(rows().filterNot { it.optLong("id")==id })
     }
