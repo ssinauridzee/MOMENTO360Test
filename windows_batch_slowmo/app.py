@@ -72,10 +72,12 @@ class SlowMoApp:
         self.status_var = tk.StringVar(value='მზადაა • დაამატე GoPro ვიდეოები')
         self.file_progress_var = tk.DoubleVar(value=0)
         self.global_progress_var = tk.DoubleVar(value=0)
+        self._settings_dirty = False
+        self._syncing_fields = False
         self._build_ui()
         for field in (self.slow_start_var, self.slow_length_var,
                       self.slow_speed_var, self.extra_intervals_var):
-            field.trace_add('write', self._update_segment_preview)
+            field.trace_add('write', self._on_settings_edited)
         self._update_segment_preview()
         self.root.after(80, self._poll)
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
@@ -266,6 +268,11 @@ class SlowMoApp:
         parse_segments(spec)
         return spec
 
+    def _on_settings_edited(self, *_):
+        self._update_segment_preview()
+        if not self._syncing_fields:
+            self._settings_dirty = True
+
     def _update_segment_preview(self, *_):
         try:
             spec = self._current_spec()
@@ -283,6 +290,7 @@ class SlowMoApp:
 
     def _show_settings_for_spec(self, spec: str):
         """Restore a video's saved settings when user selects its row."""
+        self._syncing_fields = True
         try:
             segments = parse_segments(spec)
             first = segments[0]
@@ -299,6 +307,9 @@ class SlowMoApp:
                 for item in segments[1:]))
         except (ValueError, KeyError):
             pass
+        finally:
+            self._syncing_fields = False
+            self._settings_dirty = False
 
     def add_files(self):
         if self.busy:
@@ -376,6 +387,7 @@ class SlowMoApp:
         for key in keys:
             self.items[key].segments = spec
             self._refresh_row(key)
+        self._settings_dirty = False
         self.status_var.set(f'შენელების პარამეტრები მიენიჭა {len(keys)} ვიდეოს.')
 
     def apply_selected(self):
@@ -426,6 +438,21 @@ class SlowMoApp:
         if not self.items:
             messagebox.showinfo('ვიდეოების დამატება', 'ჯერ აირჩიე GoPro ვიდეოები.')
             return
+        if self._settings_dirty:
+            try:
+                self._current_spec()
+            except ValueError as exc:
+                messagebox.showerror('შენელების პარამეტრები', str(exc))
+                return
+            if not messagebox.askyesno(
+                    'შენელების პარამეტრები',
+                    'შენელების წამები ან სიჩქარე შეცვალე, მაგრამ ღილაკით ჯერ '
+                    'ვიდეოებზე არ მიგინიჭებია.\\n\\n'
+                    'ახლანდელი პარამეტრები ყველა ვიდეოზე გამოვიყენო?'):
+                return
+            self._apply(list(self.items))
+            if self._settings_dirty:
+                return
         try:
             out = Path(self.output_var.get()).expanduser().resolve()
             out.mkdir(parents=True, exist_ok=True)
