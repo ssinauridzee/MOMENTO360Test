@@ -1,7 +1,7 @@
-name: MOMENTO 360 HERO9 WiFi Fix v1.2 APK
+name: MOMENTO 360 v1.3 Parallel Capture APK
 on:
   push:
-    branches: [momento360-gopro-wifi-diagnostics]
+    branches: [momento360-v1.3-nonblocking-upload]
   workflow_dispatch:
 jobs:
   build:
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-GoPro-WiFi-Fix-v1.2-APK
+          name: MOMENTO360-v1.3-Parallel-Capture-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
