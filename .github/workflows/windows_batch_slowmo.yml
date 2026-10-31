@@ -44,8 +44,9 @@ jobs:
           $ffmpeg = (python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
           & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=320x180:rate=60" -t 5 -c:v libx264 -pix_fmt yuv420p "test_output/gopro_input.mp4"
           if ($LASTEXITCODE -ne 0) { throw "Could not create test MP4" }
-          & ".\dist\MOMENTO_Batch_SlowMo.exe" --verify "test_output/gopro_input.mp4" "test_output/MOMENTO_test.mp4"
-          if ($LASTEXITCODE -ne 0) { throw "Windows EXE rendering test failed" }
+          $exe = (Resolve-Path ".\dist\MOMENTO_Batch_SlowMo.exe").Path
+          $job = Start-Process -FilePath $exe -ArgumentList @("--verify","test_output/gopro_input.mp4","test_output/MOMENTO_test.mp4") -Wait -PassThru
+          if ($job.ExitCode -ne 0) { throw "Windows EXE rendering test failed with exit code $($job.ExitCode)" }
           if (!(Test-Path "test_output/MOMENTO_test.mp4")) { throw "Rendered test video not found" }
           & $ffmpeg -hide_banner -loglevel error -i "test_output/MOMENTO_test.mp4" -f null -
           if ($LASTEXITCODE -ne 0) { throw "Rendered MP4 decode check failed" }
