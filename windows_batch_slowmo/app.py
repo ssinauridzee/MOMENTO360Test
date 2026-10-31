@@ -181,11 +181,28 @@ class SlowMoApp:
         self.count_label = self._label(left, 'სულ: 0 ვიდეო', 10, MUTED)
 
         self._label(right, '2. შენელების პარამეტრები', 14, TEXT, True)
-        self._label(right, 'ინტერვალები (ორიგინალი ვიდეოს წამებში)', 10, MUTED, False,
-                    pady=(18, 0))
-        self._entry(right, self.interval_var)
-        self._label(right, 'მაგ: 3-5@0.25  →  მე-3-დან მე-5 წამამდე 4× ნელა', 9, MUTED)
-        self._label(right, 'რამდენიმე შენელება: 3-5@0.25; 8-9@0.5', 9, MUTED, False, pady=(4, 12))
+        self._label(right, 'აირჩიე ზუსტად როდის და რამდენ ხანს', 10, MUTED,
+                    pady=(10, 6))
+        time_row = tk.Frame(right, bg=PANEL)
+        time_row.pack(fill=tk.X, pady=(2, 0))
+        start_col = tk.Frame(time_row, bg=PANEL)
+        start_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        length_col = tk.Frame(time_row, bg=PANEL)
+        length_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 0))
+        self._label(start_col, 'რომელი წამიდან?', 10, TEXT, True)
+        self._entry(start_col, self.slow_start_var)
+        self._label(length_col, 'რამდენი წამი?', 10, TEXT, True)
+        self._entry(length_col, self.slow_length_var)
+        self._label(right, 'რა სიჩქარით შენელდეს?', 10, TEXT, True, pady=(3, 4))
+        speed_menu = ttk.Combobox(right, textvariable=self.slow_speed_var,
+            values=['0.5× — 2-ჯერ ნელა', '0.25× — 4-ჯერ ნელა',
+                    '0.125× — 8-ჯერ ნელა'], state='readonly')
+        speed_menu.pack(fill=tk.X, pady=(0, 9))
+        self.preview_label = self._label(right, '', 10, ACCENT, True, pady=(0, 9))
+        self.preview_label.configure(textvariable=self.preview_var, wraplength=290)
+        self._label(right, 'დამატებითი მონაკვეთები (სურვილისამებრ)', 9, MUTED)
+        self._entry(right, self.extra_intervals_var)
+        self._label(right, 'მაგალითად: 8-9@0.5', 9, MUTED, pady=(0, 9))
         timing_buttons = tk.Frame(right, bg=PANEL)
         timing_buttons.pack(fill=tk.X)
         self._button(timing_buttons, 'მონიშნულებზე', self.apply_selected, padx=11, pady=9)
