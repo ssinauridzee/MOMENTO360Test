@@ -1419,7 +1419,7 @@ class MainActivity : Activity() {
         if (requestCode == 811 && pendingWifiImport) {
             pendingWifiImport=false
             if(grantResults.isNotEmpty()&&grantResults.all{it==PackageManager.PERMISSION_GRANTED})
-                startGoProImport(true)
+                pumpCapturedVideos()
             else if(::importStatus.isInitialized)
                 importStatus.text="GoPro Wi-Fi-სთან ავტომატური დაკავშირების ნებართვა აუცილებელია"
         }
@@ -1431,8 +1431,9 @@ class MainActivity : Activity() {
             val task=object:Runnable {
                 override fun run(){
                     if(isFinishing || isDestroyed)return
+                    pumpCapturedVideos()
                     autoProcessQueues()
-                    handler.postDelayed(this,20000L)
+                    handler.postDelayed(this,4000L)
                 }
             }
             retryLoop=task
