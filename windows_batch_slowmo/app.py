@@ -745,11 +745,7 @@ def _verify_from_commandline(args: list[str]) -> int:
 
 
 def _ui_selftest() -> int:
-    """Headless-command-mode health check: actually builds the Tk GUI on Windows.
-
-    Prevents another release whose CLI video processing works but whose
-    progressbar/style fails before the window becomes visible.
-    """
+    """Actually instantiate Windows Tk UI and exercise normal/slow/normal settings."""
     root = None
     try:
         root = tk.Tk()
@@ -758,15 +754,31 @@ def _ui_selftest() -> int:
         root.update_idletasks()
         assert app.progressbar.winfo_exists()
         assert app.totalbar.winfo_exists()
-        assert app._current_spec() == '3-5@0.25'
+        assert app.tail_entry.winfo_exists()
+        assert app._current_settings() == (3.0, 2.0, 0.25, None, ())
         app.slow_start_var.set('5')
-        app.slow_length_var.set('3')
+        app.slow_length_var.set('7')  # final playback seconds, not GoPro seconds
         app.slow_speed_var.set('0.5× — 2-ჯერ ნელა')
-        assert app._current_spec() == '5-8@0.5'
-        app.extra_intervals_var.set('9-10@0.25')
-        assert app._current_spec() == '5-8@0.5; 9-10@0.25'
+        settings = app._current_settings()
+        assert settings == (5.0, 7.0, 0.5, None, ())
+        video = VideoItem(Path('sample.mp4'), settings)
+        video.duration = 12.0
+        app.items['sample'] = video
+        app._replan('sample')
+        assert abs(video.tail_seconds - 3.5) < 0.01
+        assert abs(video.expected_duration - 15.5) < 0.01
+        app._update_segment_preview()
+        assert app.tail_seconds_var.get() == '3.5'
+        assert '3.5' in app.timeline_preview['text']
+        app.tail_mode_var.set('manual')
+        app.tail_seconds_var.set('2')
+        video.settings = app._current_settings()
+        app._replan('sample')
+        assert abs(video.tail_seconds - 2.0) < 0.01
+        assert abs(video.expected_duration - 17.0) < 0.01
+        assert abs(video.slow_actual_seconds - 10.0) < 0.01
         if sys.stdout is not None:
-            print('MOMENTO UI startup and three editing controls passed')
+            print('Windows UI, auto tail and manual tail tests passed')
         return 0
     except Exception:
         import traceback
