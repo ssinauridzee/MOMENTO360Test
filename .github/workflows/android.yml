@@ -1,7 +1,7 @@
-name: MOMENTO 360 v1.3 Parallel Capture APK
+name: MOMENTO 360 v1.4 Automatic SMS APK
 on:
   push:
-    branches: [momento360-v1.3-nonblocking-upload]
+    branches: [momento360-v1.4-auto-sms]
   workflow_dispatch:
 jobs:
   build:
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-v1.3-Parallel-Capture-APK
+          name: MOMENTO360-v1.4-AutoSMS-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
