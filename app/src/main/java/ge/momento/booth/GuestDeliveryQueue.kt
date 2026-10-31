@@ -157,6 +157,39 @@ class GuestDeliveryQueue(private val context: Context) {
         }
     }
 
+    /** Restore guest phone associations from the v1.5 debug-app backup. */
+    @Synchronized fun restoreFromBackup(json:String):Int {
+        val backup=JSONArray(json)
+        require(backup.length() in 1..500) { "SMS-ის ძველი რიგი ცარიელია ან არასწორია" }
+        val existing=read()
+        val known=existing.map { it.optLong("id") }.toMutableSet()
+        var added=0
+        for(i in 0 until backup.length()) {
+            val old=backup.optJSONObject(i)?:continue
+            val id=old.optLong("id")
+            if(id<=0L || id in known)continue
+            val phone=old.optString("phone")
+            if(phone.isNotBlank() && !Regex("9955[0-9]{8}").matches(phone))continue
+            val clean=entry(id)
+                .put("phone",phone)
+                .put("name",old.optString("name").take(80))
+                .put("file","")
+                .put("token","")
+                .put("url","")
+                .put("uploaded",false)
+                .put("state","pending")
+                .put("retryAt",0L)
+                .put("attempts",0)
+            // No old pending web upload session can reference a new app's
+            // private filesystem: re-download and re-upload safely.
+            existing.add(clean)
+            known.add(id)
+            added++
+        }
+        if(added>0)write(existing)
+        return added
+    }
+
     @Synchronized fun pendingCount()=read().count {
         it.optString("phone").isNotBlank() && it.optString("state")!="sent"
     }
