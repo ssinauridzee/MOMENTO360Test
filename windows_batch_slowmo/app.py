@@ -249,6 +249,57 @@ class SlowMoApp:
                                 fg=ACCENT, font=(FONT, 10), anchor='w', justify='left')
         self.message.pack(fill=tk.X)
 
+    def _current_spec(self) -> str:
+        """Create source-timeline intervals from three visible user controls."""
+        start = parse_seconds(self.slow_start_var.get())
+        length = parse_seconds(self.slow_length_var.get())
+        if length <= 0:
+            raise ValueError('შენელების ხანგრძლივობა 0-ზე მეტი უნდა იყოს.')
+        speed_text = self.slow_speed_var.get().split('×')[0].strip()
+        speed = parse_seconds(speed_text)
+        if speed not in (0.5, 0.25, 0.125):
+            raise ValueError('აირჩიე 0.5×, 0.25× ან 0.125×.')
+        spec = f'{start:g}-{start + length:g}@{speed:g}'
+        extra = self.extra_intervals_var.get().strip()
+        if extra:
+            spec += '; ' + extra
+        parse_segments(spec)
+        return spec
+
+    def _update_segment_preview(self, *_):
+        try:
+            spec = self._current_spec()
+            first = SlowSegment(
+                parse_seconds(self.slow_start_var.get()),
+                parse_seconds(self.slow_start_var.get()) +
+                parse_seconds(self.slow_length_var.get()),
+                parse_seconds(self.slow_speed_var.get().split('×')[0].strip()))
+            self.preview_var.set(
+                f'✓ ორიგინალის {first.start:g}–{first.end:g} წმ '
+                f'→ მზაში {first.original_seconds / first.speed:g} წმ')
+            self.interval_var.set(spec)
+        except ValueError as exc:
+            self.preview_var.set('⚠ ' + str(exc))
+
+    def _show_settings_for_spec(self, spec: str):
+        """Restore a video's saved settings when user selects its row."""
+        try:
+            segments = parse_segments(spec)
+            first = segments[0]
+            self.slow_start_var.set(f'{first.start:g}')
+            self.slow_length_var.set(f'{first.original_seconds:g}')
+            speed_names = {
+                0.5: '0.5× — 2-ჯერ ნელა',
+                0.25: '0.25× — 4-ჯერ ნელა',
+                0.125: '0.125× — 8-ჯერ ნელა',
+            }
+            self.slow_speed_var.set(speed_names[first.speed])
+            self.extra_intervals_var.set('; '.join(
+                f'{item.start:g}-{item.end:g}@{item.speed:g}'
+                for item in segments[1:]))
+        except (ValueError, KeyError):
+            pass
+
     def add_files(self):
         if self.busy:
             return
