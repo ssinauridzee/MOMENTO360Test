@@ -636,8 +636,11 @@ class MainActivity : Activity() {
             return
         }
         if (!tok.connected) {boothUi.showMessage("ჯერ დაუკავშირდი 360Tok-ს");return}
-        if (busy || exporting || uploading || reservingLink || recording) {
-            boothUi.showMessage("ჯერ დაასრულე მიმდინარე გადაღება ან დამუშავება")
+        // Drive uploads run on their own worker thread and use immutable queued files.
+        // A previous guest's upload must NEVER block the next shutter/motor START.
+        // Only GoPro capture, import and video export are mutually exclusive here.
+        if (busy || exporting || reservingLink || recording || importingFromGoPro) {
+            boothUi.showMessage("ჯერ დაასრულე მიმდინარე გადაღება ან MP4-ის დამუშავება")
             return
         }
         // The existing GoPro v0.7 uses a separate Wi-Fi preview capture in SD-less mode.
@@ -877,7 +880,8 @@ class MainActivity : Activity() {
 
     private fun updatePendingLabel() {
         if (::pendingLabel.isInitialized)
-            pendingLabel.text = "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო. არ წაშალო აპლიკაცია."
+            pendingLabel.text = (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
+                "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო. არ წაშალო აპლიკაცია."
     }
 
     private fun openShareDialog() {
