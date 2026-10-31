@@ -1,0 +1,517 @@
+"""MOMENTO Batch SlowMo — Windows desktop application for GoPro videos.
+
+Simple, offline, no login, no API keys, standard-library UI. FFmpeg is bundled
+inside the Windows executable and runs solely on the user's computer.
+"""
+from __future__ import annotations
+
+import csv
+import datetime as dt
+import os
+from pathlib import Path
+import queue
+import subprocess
+import sys
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import webbrowser
+
+from processor import (
+    Cancelled, SlowSegment, SUPPORTED_EXTENSIONS, choose_output_name,
+    ffmpeg_path, parse_segments, probe_duration, render, result_duration,
+    validate_duration,
+)
+
+BG = '#0C1627'
+PANEL = '#12223B'
+PANEL2 = '#1C3150'
+TEXT = '#F0F5FF'
+MUTED = '#9FB1CA'
+ACCENT = '#00C8B1'
+ACCENT_HOVER = '#00A894'
+WARN = '#F9BD70'
+RED = '#E97887'
+FONT = 'Segoe UI'
+
+
+class VideoItem:
+    def __init__(self, path: Path, segments: str):
+        self.path = path
+        self.segments = segments
+        self.duration: float | None = None
+        self.output: Path | None = None
+        self.output_duration: float | None = None
+        self.status = 'მზადაა'
+        self.error = ''
+
+
+class SlowMoApp:
+    def __init__(self, root: tk.Tk):
+        self.root = root
+        self.root.title('MOMENTO — Batch SlowMo')
+        self.root.configure(bg=BG)
+        self.root.geometry('1220x790')
+        self.root.minsize(950, 660)
+        self.items: dict[str, VideoItem] = {}
+        self.events: queue.Queue[tuple] = queue.Queue()
+        self.busy = False
+        self.cancelled = threading.Event()
+        self.completed = 0
+        self.failed = 0
+        self.current_file = ''
+        self.interval_var = tk.StringVar(value='3-5@0.25')
+        self.output_var = tk.StringVar(value=str(Path.home() / 'Videos' / 'MOMENTO_MERIA_READY'))
+        self.fps_var = tk.StringVar(value='60')
+        self.quality_var = tk.StringVar(value='მაღალი (CRF 20)')
+        self.status_var = tk.StringVar(value='მზადაა • დაამატე GoPro ვიდეოები')
+        self.file_progress_var = tk.DoubleVar(value=0)
+        self.global_progress_var = tk.DoubleVar(value=0)
+        self._build_ui()
+        self.root.after(80, self._poll)
+        self.root.protocol('WM_DELETE_WINDOW', self._on_close)
+
+    def _style(self):
+        st = ttk.Style()
+        try:
+            st.theme_use('clam')
+        except tk.TclError:
+            pass
+        st.configure('Momento.Treeview', background=PANEL, foreground=TEXT,
+                     fieldbackground=PANEL, rowheight=33, borderwidth=0,
+                     font=(FONT, 10))
+        st.configure('Momento.Treeview.Heading', background=PANEL2, foreground=TEXT,
+                     font=(FONT, 10, 'bold'), padding=(8, 9), relief='flat')
+        st.map('Momento.Treeview', background=[('selected', '#2B6482')],
+               foreground=[('selected', TEXT)])
+        st.configure('Momento.TProgressbar', background=ACCENT, troughcolor=PANEL2,
+                     bordercolor=BG, lightcolor=ACCENT, darkcolor=ACCENT, thickness=13)
+        st.configure('Momento.TCombobox', fieldbackground='#243852',
+                     background='#243852', foreground=TEXT, padding=6)
+
+    def _label(self, parent, text, size=10, color=TEXT, bold=False, **pack):
+        w = tk.Label(parent, text=text, bg=parent['bg'], fg=color,
+                     font=(FONT, size, 'bold' if bold else 'normal'),
+                     justify='left', anchor='w', wraplength=720)
+        w.pack(**({'anchor': 'w'} | pack))
+        return w
+
+    def _button(self, parent, text, command, *, prominent=False, danger=False, side=None, padx=13, pady=10):
+        fg = '#082B28' if prominent else TEXT
+        bg = ACCENT if prominent else ('#5C2B44' if danger else PANEL2)
+        b = tk.Button(parent, text=text, command=command, bg=bg, fg=fg,
+                      activebackground=ACCENT_HOVER if prominent else '#2E5073',
+                      activeforeground=TEXT if not prominent else '#082B28',
+                      relief='flat', bd=0, cursor='hand2', font=(FONT, 10, 'bold'),
+                      padx=padx, pady=pady)
+        b.pack(side=side or tk.LEFT, padx=(0, 8), pady=4)
+        return b
+
+    def _entry(self, parent, variable, width=None):
+        e = tk.Entry(parent, textvariable=variable, bg='#233A59', fg=TEXT,
+                     insertbackground=TEXT, relief='flat', bd=0,
+                     highlightbackground='#385678', highlightthickness=1,
+                     font=(FONT, 11))
+        e.pack(fill=tk.X, ipady=8, pady=(5, 10))
+        return e
+
+    def _build_ui(self):
+        self._style()
+        header = tk.Frame(self.root, bg=BG, padx=27, pady=16)
+        header.pack(fill=tk.X)
+        self._label(header, 'MOMENTO  /  BATCH SLOWMO', 24, TEXT, True)
+        self._label(header, 'GoPro-ს ვიდეოები → შენელება → ერთი საქაღალდე → ერთი Google Drive ბმული',
+                    11, MUTED)
+        body = tk.Frame(self.root, bg=BG, padx=20)
+        body.pack(fill=tk.BOTH, expand=True)
+        left = tk.Frame(body, bg=PANEL, padx=16, pady=15)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 11))
+        right = tk.Frame(body, bg=PANEL, padx=17, pady=16, width=330)
+        right.pack(side=tk.RIGHT, fill=tk.Y)
+        right.pack_propagate(False)
+
+        self._label(left, '1. ვიდეოების სია', 15, TEXT, True)
+        toolbar = tk.Frame(left, bg=PANEL)
+        toolbar.pack(fill=tk.X, pady=(7, 10))
+        self._button(toolbar, '+ ვიდეოების დამატება', self.add_files, prominent=True)
+        self._button(toolbar, '+ საქაღალდე', self.add_folder)
+        self._button(toolbar, 'წაშლა სიიდან', self.remove_selected)
+        cols = ('filename', 'duration', 'segments', 'status')
+        frame = tk.Frame(left, bg=PANEL)
+        frame.pack(fill=tk.BOTH, expand=True)
+        self.tree = ttk.Treeview(frame, columns=cols, show='headings',
+                                 style='Momento.Treeview', selectmode='extended')
+        self.tree.heading('filename', text='ფაილი')
+        self.tree.heading('duration', text='ორიგინალი')
+        self.tree.heading('segments', text='შენელების ინტერვალები')
+        self.tree.heading('status', text='მდგომარეობა')
+        self.tree.column('filename', minwidth=130, width=180, anchor='w', stretch=True)
+        self.tree.column('duration', minwidth=68, width=86, anchor='center', stretch=False)
+        self.tree.column('segments', minwidth=110, width=150, anchor='w')
+        self.tree.column('status', minwidth=110, width=146, anchor='w')
+        scroll = ttk.Scrollbar(frame, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.bind('<<TreeviewSelect>>', self._select_item)
+        self.tree.bind('<Double-1>', self._select_item)
+        self.count_label = self._label(left, 'სულ: 0 ვიდეო', 10, MUTED)
+
+        self._label(right, '2. შენელების პარამეტრები', 14, TEXT, True)
+        self._label(right, 'ინტერვალები (ორიგინალი ვიდეოს წამებში)', 10, MUTED, False,
+                    pady=(18, 0))
+        self._entry(right, self.interval_var)
+        self._label(right, 'მაგ: 3-5@0.25  →  მე-3-დან მე-5 წამამდე 4× ნელა', 9, MUTED)
+        self._label(right, 'რამდენიმე შენელება: 3-5@0.25; 8-9@0.5', 9, MUTED, False, pady=(4, 12))
+        timing_buttons = tk.Frame(right, bg=PANEL)
+        timing_buttons.pack(fill=tk.X)
+        self._button(timing_buttons, 'მონიშნულებზე', self.apply_selected, padx=11, pady=9)
+        self._button(timing_buttons, 'ყველა ვიდეოზე', self.apply_all, prominent=True, padx=11, pady=9)
+
+        self._label(right, 'საბოლოო ვიდეოს FPS', 10, MUTED, False, pady=(15, 4))
+        fps = ttk.Combobox(right, textvariable=self.fps_var, values=['30', '60'], state='readonly')
+        fps.pack(fill=tk.X, pady=(0, 10))
+        self._label(right, 'ხარისხი', 10, MUTED, False, pady=(4, 4))
+        quality = ttk.Combobox(right, textvariable=self.quality_var,
+                               values=['მაქსიმალური (CRF 18)', 'მაღალი (CRF 20)',
+                                       'კომპაქტური (CRF 23)'], state='readonly')
+        quality.pack(fill=tk.X, pady=(0, 14))
+        self._label(right, '3. მზა ვიდეოების საქაღალდე', 14, TEXT, True, pady=(7, 4))
+        self._entry(right, self.output_var)
+        out_buttons = tk.Frame(right, bg=PANEL)
+        out_buttons.pack(fill=tk.X)
+        self._button(out_buttons, 'საქაღალდის არჩევა', self.choose_output, pady=8)
+        self._button(out_buttons, 'გახსნა', self.open_output, pady=8)
+
+        self._label(right, '4. Google Drive', 14, TEXT, True, pady=(18, 4))
+        self._label(right, 'პროგრამა ვიდეოებს ლოკალურად ქმნის. მერე ატვირთე მთელი საქაღალდე Drive-ში და მერიას ერთი საქაღალდის Viewer ბმული მიეცი.',
+                    10, MUTED)
+        drive = tk.Frame(right, bg=PANEL)
+        drive.pack(fill=tk.X, pady=(7, 0))
+        self._button(drive, 'Google Drive-ის გახსნა', self.open_drive, pady=9)
+
+        footer = tk.Frame(self.root, bg=BG, padx=27, pady=16)
+        footer.pack(fill=tk.X)
+        self._label(footer, '5. ავტომატური დამუშავება', 13, TEXT, True)
+        info = tk.Frame(footer, bg=BG)
+        info.pack(fill=tk.X, pady=5)
+        self.start_button = self._button(info, '▶ ყველას დამუშავება', self.start, prominent=True, padx=24, pady=12)
+        self.stop_button = self._button(info, '■ შეჩერება', self.stop, danger=True, padx=20, pady=12)
+        self.stop_button.config(state=tk.DISABLED)
+        self.progress_text = self._label(footer, 'ვიდეო: 0% • ყველა: 0%', 10, MUTED)
+        self.progressbar = ttk.Progressbar(footer, variable=self.file_progress_var,
+                                            style='Momento.TProgressbar', maximum=100)
+        self.progressbar.pack(fill=tk.X, pady=(4, 6))
+        self.totalbar = ttk.Progressbar(footer, variable=self.global_progress_var,
+                                       style='Momento.TProgressbar', maximum=100)
+        self.totalbar.pack(fill=tk.X, pady=(0, 4))
+        self.message = tk.Label(footer, textvariable=self.status_var, bg=BG,
+                                fg=ACCENT, font=(FONT, 10), anchor='w', justify='left')
+        self.message.pack(fill=tk.X)
+
+    def add_files(self):
+        if self.busy:
+            return
+        paths = filedialog.askopenfilenames(title='აირჩიე GoPro MP4 ვიდეოები',
+                    filetypes=[('ვიდეოები', '*.mp4 *.mov *.m4v *.avi *.mkv'), ('ყველა ფაილი', '*.*')])
+        self._add_paths([Path(p) for p in paths])
+
+    def add_folder(self):
+        if self.busy:
+            return
+        folder = filedialog.askdirectory(title='აირჩიე GoPro ვიდეოების საქაღალდე')
+        if folder:
+            self._add_paths(sorted(p for p in Path(folder).iterdir()
+                                   if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS))
+
+    def _add_paths(self, paths: list[Path]):
+        new = []
+        try:
+            parse_segments(self.interval_var.get())
+        except ValueError as e:
+            messagebox.showerror('ინტერვალის შეცდომა', str(e))
+            return
+        for path in paths:
+            if path.suffix.lower() not in SUPPORTED_EXTENSIONS or not path.is_file():
+                continue
+            key = str(path.resolve()).lower()
+            if key in self.items:
+                continue
+            item = VideoItem(path.resolve(), self.interval_var.get().strip())
+            self.items[key] = item
+            self.tree.insert('', 'end', iid=key,
+                             values=(path.name, '...', item.segments, item.status))
+            new.append((key, path))
+        self.count_label.config(text=f'სულ: {len(self.items)} ვიდეო')
+        if new:
+            self.status_var.set(f'დაემატა {len(new)} ვიდეო. პარამეტრები შეგიძლია ყველას ერთად მიუთითო.')
+            threading.Thread(target=self._probe_items, args=(new,), daemon=True).start()
+
+    def _probe_items(self, items):
+        ffmpeg = ffmpeg_path()
+        for key, path in items:
+            try:
+                duration = probe_duration(ffmpeg, path)
+                self.events.put(('probed', key, duration))
+            except Exception as e:
+                self.events.put(('probe_error', key, str(e)))
+
+    def remove_selected(self):
+        if self.busy:
+            return
+        for key in self.tree.selection():
+            self.tree.delete(key)
+            self.items.pop(key, None)
+        self.count_label.config(text=f'სულ: {len(self.items)} ვიდეო')
+
+    def _select_item(self, event=None):
+        selected = self.tree.selection()
+        if len(selected) == 1 and selected[0] in self.items:
+            self.interval_var.set(self.items[selected[0]].segments)
+
+    def _apply(self, keys):
+        if self.busy:
+            return
+        spec = self.interval_var.get().strip()
+        try:
+            segments = parse_segments(spec)
+            for key in keys:
+                item = self.items[key]
+                if item.duration is not None:
+                    validate_duration(segments, item.duration)
+        except ValueError as e:
+            messagebox.showerror('შენელების შეცდომა', str(e))
+            return
+        for key in keys:
+            self.items[key].segments = spec
+            self._refresh_row(key)
+        self.status_var.set(f'შენელების პარამეტრები მიენიჭა {len(keys)} ვიდეოს.')
+
+    def apply_selected(self):
+        selection = [key for key in self.tree.selection() if key in self.items]
+        if not selection:
+            messagebox.showinfo('მონიშვნა', 'ჯერ სიაში მონიშნე ერთი ან რამდენიმე ვიდეო.')
+            return
+        self._apply(selection)
+
+    def apply_all(self):
+        if self.items:
+            self._apply(list(self.items))
+
+    def choose_output(self):
+        if self.busy:
+            return
+        folder = filedialog.askdirectory(title='აირჩიე მზა MP4-ების საქაღალდე')
+        if folder:
+            self.output_var.set(folder)
+
+    def open_output(self):
+        path = Path(self.output_var.get()).expanduser()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            if os.name == 'nt':
+                os.startfile(str(path))
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', str(path)])
+            else:
+                subprocess.Popen(['xdg-open', str(path)])
+        except OSError as e:
+            messagebox.showerror('საქაღალდის შეცდომა', str(e))
+
+    def open_drive(self):
+        webbrowser.open('https://drive.google.com/drive/u/0/my-drive')
+
+    def _refresh_row(self, key: str):
+        if key not in self.items or not self.tree.exists(key):
+            return
+        item = self.items[key]
+        self.tree.item(key, values=(item.path.name,
+            f'{item.duration:.2f} წმ' if item.duration else '...',
+            item.segments, item.status))
+
+    def start(self):
+        if self.busy:
+            return
+        if not self.items:
+            messagebox.showinfo('ვიდეოების დამატება', 'ჯერ აირჩიე GoPro ვიდეოები.')
+            return
+        try:
+            out = Path(self.output_var.get()).expanduser().resolve()
+            out.mkdir(parents=True, exist_ok=True)
+            if not out.is_dir():
+                raise ValueError('საქაღალდე მიუწვდომელია.')
+            specs = {key: parse_segments(item.segments) for key, item in self.items.items()}
+            for key, segments in specs.items():
+                item = self.items[key]
+                if item.duration:
+                    validate_duration(segments, item.duration)
+            fps = int(self.fps_var.get())
+            crf = int(self.quality_var.get().split('CRF ')[-1].rstrip(')'))
+        except (ValueError, OSError) as e:
+            messagebox.showerror('პარამეტრების შეცდომა', str(e))
+            return
+        self.busy = True
+        self.cancelled.clear()
+        self.completed = self.failed = 0
+        self.file_progress_var.set(0)
+        self.global_progress_var.set(0)
+        self.start_button.config(state=tk.DISABLED)
+        self.stop_button.config(state=tk.NORMAL)
+        batch = list(self.items.items())
+        self.status_var.set(f'იწყება {len(batch)} ვიდეოს დამუშავება...')
+        threading.Thread(target=self._process, args=(batch, specs, out, fps, crf),
+                         daemon=True, name='MOMENTO-VideoWorker').start()
+
+    def _process(self, batch, specs, out, fps, crf):
+        rows = []
+        occupied: set[str] = set()
+        ffmpeg = ffmpeg_path()
+        count = len(batch)
+        for i, (key, item) in enumerate(batch):
+            if self.cancelled.is_set():
+                break
+            self.events.put(('status', key, 'მუშავდება…'))
+            output = choose_output_name(out, item.path, occupied)
+            try:
+                def on_progress(percent, *, file_key=key, index=i):
+                    self.events.put(('progress', file_key, index, count, percent))
+                finished, original_seconds, output_seconds = render(
+                    item.path, output, specs[key], ffmpeg=ffmpeg, fps=fps,
+                    crf=crf, cancelled=self.cancelled, progress=on_progress)
+                self.events.put(('done_file', key, str(finished), original_seconds, output_seconds))
+                status = 'დასრულდა'
+                error = ''
+            except Cancelled:
+                self.events.put(('status', key, 'შეჩერებულია'))
+                break
+            except Exception as e:
+                status = 'შეცდომა'
+                error = str(e)
+                self.events.put(('error_file', key, error))
+                original_seconds = item.duration or 0
+                output_seconds = 0
+            rows.append({
+                'ფაილი': item.path.name, 'ორიგინალი (წმ)': f'{original_seconds:.2f}',
+                'შენელების ინტერვალები': item.segments,
+                'მზა ვიდეო (წმ)': f'{output_seconds:.2f}',
+                'მდგომარეობა': status,
+                'გამოსავალი': str(output) if status == 'დასრულდა' else '',
+                'შეცდომა': error,
+            })
+        report = out / 'MOMENTO_ვიდეოების_სია.csv'
+        try:
+            with report.open('w', encoding='utf-8-sig', newline='') as f:
+                writer = csv.DictWriter(f, fieldnames=list(rows[0]) if rows else [
+                    'ფაილი','ორიგინალი (წმ)','შენელების ინტერვალები',
+                    'მზა ვიდეო (წმ)','მდგომარეობა','გამოსავალი','შეცდომა'])
+                writer.writeheader()
+                writer.writerows(rows)
+        except OSError as e:
+            self.events.put(('warning', f'CSV-ის შენახვა ვერ მოხერხდა: {e}'))
+        self.events.put(('finished', self.cancelled.is_set(), out))
+
+    def stop(self):
+        if self.busy:
+            self.cancelled.set()
+            self.status_var.set('მიმდინარე ვიდეო ჩერდება. დასრულებული MP4-ები შენარჩუნდება.')
+            self.stop_button.config(state=tk.DISABLED)
+
+    def _poll(self):
+        try:
+            while True:
+                event = self.events.get_nowait()
+                kind = event[0]
+                if kind == 'probed':
+                    _, key, duration = event
+                    if key in self.items:
+                        self.items[key].duration = duration
+                        self._refresh_row(key)
+                elif kind == 'probe_error':
+                    _, key, err = event
+                    if key in self.items:
+                        self.items[key].status = 'შემოწმების შეცდომა'
+                        self.items[key].error = err
+                        self._refresh_row(key)
+                elif kind == 'status':
+                    _, key, status = event
+                    if key in self.items:
+                        self.items[key].status = status
+                        self._refresh_row(key)
+                elif kind == 'progress':
+                    _, key, index, count, percent = event
+                    self.file_progress_var.set(percent)
+                    self.global_progress_var.set((index + percent / 100) * 100 / count)
+                    self.progress_text.config(text=f'ვიდეო {index+1}/{count}: {percent:.0f}% • სულ: {(index + percent/100)*100/count:.0f}%')
+                    if key in self.items:
+                        self.items[key].status = f'{percent:.0f}%'
+                        self._refresh_row(key)
+                elif kind == 'done_file':
+                    _, key, output, orig, result_secs = event
+                    self.completed += 1
+                    if key in self.items:
+                        self.items[key].output = Path(output)
+                        self.items[key].output_duration = result_secs
+                        self.items[key].status = '✓ მზადაა'
+                        self._refresh_row(key)
+                elif kind == 'error_file':
+                    _, key, err = event
+                    self.failed += 1
+                    if key in self.items:
+                        self.items[key].status = '✕ შეცდომა'
+                        self.items[key].error = err
+                        self._refresh_row(key)
+                        self.status_var.set(f'⚠ {self.items[key].path.name}: {err[:170]}')
+                elif kind == 'warning':
+                    self.status_var.set(event[1])
+                elif kind == 'finished':
+                    self.busy = False
+                    self.start_button.config(state=tk.NORMAL)
+                    self.stop_button.config(state=tk.DISABLED)
+                    _, was_cancelled, out = event
+                    total = len(self.items)
+                    note = ('გაჩერებულია.' if was_cancelled else 'დამთავრდა.') + \
+                           f' მზადაა: {self.completed}; შეცდომა: {self.failed}; სულ: {total}.'
+                    self.status_var.set(note)
+                    if not was_cancelled:
+                        self.global_progress_var.set(100)
+                    messagebox.showinfo('MOMENTO — შედეგი',
+                        note + '\n\nმზა ვიდეოები და MOMENTO_ვიდეოების_სია.csv ერთ საქაღალდეშია.'
+                        '\nGoogle Drive-ზე გააზიარე სწორედ ეს საქაღალდე.')
+        except queue.Empty:
+            pass
+        finally:
+            self.root.after(80, self._poll)
+
+    def _on_close(self):
+        if self.busy:
+            messagebox.showwarning('მიმდინარე დამუშავება',
+                 'ჯერ დააჭირე „შეჩერება“-ს და დაელოდე მიმდინარე ფაილის დასრულებას.')
+            return
+        self.root.destroy()
+
+
+def _verify_from_commandline(args: list[str]) -> int:
+    if len(args) != 2:
+        return 2
+    try:
+        render(Path(args[0]), Path(args[1]), [SlowSegment(1, 2, 0.5)])
+        return 0 if Path(args[1]).is_file() else 1
+    except Exception:
+        return 1
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == '--verify':
+        return _verify_from_commandline(sys.argv[2:])
+    root = tk.Tk()
+    try:
+        root.tk.call('tk', 'scaling', 1.15)
+    except tk.TclError:
+        pass
+    SlowMoApp(root)
+    root.mainloop()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
