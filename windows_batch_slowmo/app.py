@@ -280,65 +280,131 @@ class SlowMoApp:
                                 fg=ACCENT, font=(FONT, 10), anchor='w', justify='left')
         self.message.pack(fill=tk.X)
 
-    def _current_spec(self) -> str:
-        """Create source-timeline intervals from three visible user controls."""
+    def _current_settings(self) -> tuple:
+        """UI values: slow duration is measured in FINISHED playback, like Android."""
         start = parse_seconds(self.slow_start_var.get())
-        length = parse_seconds(self.slow_length_var.get())
-        if length <= 0:
-            raise ValueError('შენელების ხანგრძლივობა 0-ზე მეტი უნდა იყოს.')
+        slow_final = parse_seconds(self.slow_length_var.get())
+        if slow_final <= 0:
+            raise ValueError('რამდენი წამი შეანელოს? მიუთითე 0-ზე მეტი.')
         speed_text = self.slow_speed_var.get().split('×')[0].strip()
         speed = parse_seconds(speed_text)
         if speed not in (0.5, 0.25, 0.125):
-            raise ValueError('აირჩიე 0.5×, 0.25× ან 0.125×.')
-        spec = f'{start:g}-{start + length:g}@{speed:g}'
-        extra = self.extra_intervals_var.get().strip()
-        if extra:
-            spec += '; ' + extra
-        parse_segments(spec)
-        return spec
+            raise ValueError('სიჩქარედ აირჩიე 0.5×, 0.25× ან 0.125×.')
+        mode = self.tail_mode_var.get()
+        if mode not in ('auto', 'manual'):
+            raise ValueError('ბოლო ნაწილის რეჟიმი მიუწვდომელია.')
+        tail = None if mode == 'auto' else parse_seconds(self.tail_seconds_var.get())
+        extras = tuple(parse_segments(self.extra_intervals_var.get())
+                       if self.extra_intervals_var.get().strip() else ())
+        if tail is not None and extras:
+            raise ValueError('ბოლო ნაწილის ხელით მითითებისთვის დამატებითი შენელებები გაასუფთავე.')
+        return start, slow_final, speed, tail, extras
+
+    def _current_spec(self) -> str:
+        """Compatibility helper: main interval before individual source is probed."""
+        start, slow_final, speed, tail, extras = self._current_settings()
+        return format_segments((
+            SlowSegment(start, start + slow_final * speed, speed), *extras))
 
     def _on_settings_edited(self, *_):
+        if self._syncing_fields:
+            return
+        self._settings_dirty = True
         self._update_segment_preview()
-        if not self._syncing_fields:
-            self._settings_dirty = True
 
-    def _update_segment_preview(self, *_):
+    def _preview_item(self):
+        selected = self.tree.selection()
+        if selected and selected[0] in self.items:
+            return self.items[selected[0]]
+        return next(iter(self.items.values()), None)
+
+    def _update_segment_preview(self):
+        manual = self.tail_mode_var.get() == 'manual'
+        self.tail_entry.configure(state=tk.NORMAL if manual else tk.DISABLED)
         try:
-            spec = self._current_spec()
-            first = SlowSegment(
-                parse_seconds(self.slow_start_var.get()),
-                parse_seconds(self.slow_start_var.get()) +
-                parse_seconds(self.slow_length_var.get()),
-                parse_seconds(self.slow_speed_var.get().split('×')[0].strip()))
+            settings = self._current_settings()
+            start, slow_final, speed, tail, extras = settings
+            source_seconds = slow_final * speed
+            self.interval_var.set(self._current_spec())
+            item = self._preview_item()
+            if item is None or item.duration is None:
+                self.preview_var.set(
+                    f'✓ დასაწყისი {start:g} წმ; შენელება {slow_final:g} წმ '
+                    f'(ორიგინალიდან {source_seconds:g} წმ); '
+                    'ბოლო დრო დაემატება ვიდეოს წაკითხვის შემდეგ.')
+                self.timeline_preview.configure(
+                    text='დაამატე MP4 და გამოჩნდება რეალური დროის განაწილება.')
+                if not manual:
+                    self._set_auto_tail_display('—')
+                return
+            timeline = plan_timeline(item.duration, *settings)
             self.preview_var.set(
-                f'✓ ორიგინალის {first.start:g}–{first.end:g} წმ '
-                f'→ მზაში {first.original_seconds / first.speed:g} წმ')
-            self.interval_var.set(spec)
+                f'✓ ორიგინალის {timeline.segments[0].start:g}–'
+                f'{timeline.segments[0].end:g} წმ → '
+                f'{timeline.slow_playback_seconds:g} წმ შენელება')
+            self.timeline_preview.configure(
+                text=(f'{item.path.name} • ორიგინალი {item.duration:g} წმ\\n'
+                      f'▶ {timeline.intro:g} წმ ჩვეულებრივი დასაწყისი\\n'
+                      f'▶ {timeline.slow_playback_seconds:g} წმ შენელებული '
+                      f'({speed:g}×)\\n'
+                      f'▶ {timeline.outro:g} წმ ჩვეულებრივი დასასრული\\n'
+                      f'✓ საბოლოოდ: ≈ {timeline.final_seconds:g} წმ'))
+            if not manual:
+                self._set_auto_tail_display(f'{timeline.outro:g}')
         except ValueError as exc:
             self.preview_var.set('⚠ ' + str(exc))
+            self.timeline_preview.configure(
+                text='ამ ვიდეოზე პარამეტრები არ თავსდება. შეამცირე შენელება '
+                     'ან ბოლო ჩვეულებრივი წამები.')
 
-    def _show_settings_for_spec(self, spec: str):
-        """Restore a video's saved settings when user selects its row."""
+    def _set_auto_tail_display(self, text: str):
+        old = self._syncing_fields
         self._syncing_fields = True
         try:
-            segments = parse_segments(spec)
-            first = segments[0]
-            self.slow_start_var.set(f'{first.start:g}')
-            self.slow_length_var.set(f'{first.original_seconds:g}')
+            self.tail_seconds_var.set(text)
+        finally:
+            self._syncing_fields = old
+
+    def _show_settings_for_item(self, item: VideoItem):
+        self._syncing_fields = True
+        try:
+            start, slow_final, speed, tail, extras = item.settings
+            self.slow_start_var.set(f'{start:g}')
+            self.slow_length_var.set(f'{slow_final:g}')
             speed_names = {
                 0.5: '0.5× — 2-ჯერ ნელა',
                 0.25: '0.25× — 4-ჯერ ნელა',
                 0.125: '0.125× — 8-ჯერ ნელა',
             }
-            self.slow_speed_var.set(speed_names[first.speed])
-            self.extra_intervals_var.set('; '.join(
-                f'{item.start:g}-{item.end:g}@{item.speed:g}'
-                for item in segments[1:]))
-        except (ValueError, KeyError):
-            pass
+            self.slow_speed_var.set(speed_names[speed])
+            self.tail_mode_var.set('auto' if tail is None else 'manual')
+            self.tail_seconds_var.set('' if tail is None else f'{tail:g}')
+            self.extra_intervals_var.set(format_segments(extras))
         finally:
             self._syncing_fields = False
             self._settings_dirty = False
+        self._update_segment_preview()
+
+    def _replan(self, key: str) -> None:
+        item = self.items.get(key)
+        if not item or item.duration is None:
+            return
+        try:
+            timeline = plan_timeline(item.duration, *item.settings)
+            item.segments = format_segments(timeline.segments)
+            item.tail_seconds = timeline.outro
+            item.expected_duration = timeline.final_seconds
+            item.slow_actual_seconds = timeline.slow_playback_seconds
+            item.error = ''
+            item.status = '✓ მზადაა'
+        except ValueError as exc:
+            item.segments = '—'
+            item.tail_seconds = None
+            item.expected_duration = None
+            item.slow_actual_seconds = None
+            item.error = str(exc)
+            item.status = '⚠ პარამეტრები'
+        self._refresh_row(key)
 
     def add_files(self):
         if self.busy:
