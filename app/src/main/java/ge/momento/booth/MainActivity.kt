@@ -26,7 +26,12 @@ import java.util.Locale
 class MainActivity : Activity() {
     private lateinit var ble: GoProBle
     private lateinit var importer: GoProMediaImporter
+    private lateinit var captures: CaptureQueue
     private var importingFromGoPro=false
+    private var queuedImportId:Long?=null
+    private var downloadGeneration=0
+    private var captureQueueError=""
+
     private var pendingWifiImport=false
     private var captureStartedAtMs=0L
     private lateinit var importStatus: TextView
@@ -97,6 +102,7 @@ class MainActivity : Activity() {
         lastPreviewFile = filesDir.listFiles()?.filter { it.isFile && it.name.startsWith("MOMENTO_preview_") && it.extension == "ts" }?.maxByOrNull { it.lastModified() }
         api = Momento360Api(this)
         importer = GoProMediaImporter(this)
+        captures = CaptureQueue(this)
         pendingUploads = PendingUploadQueue(this)
         preparedVideos = PreparedVideoQueue(this)
         guestDelivery = GuestDeliveryQueue(this)
@@ -555,6 +561,12 @@ class MainActivity : Activity() {
         return true
     }
     private fun startGoProImport(automatic:Boolean){
+        // Automatic recordings are processed by the persistent FIFO queue.
+        // Manual recovery cannot skip an older unprocessed guest clip.
+        if(automatic || captures.count()>0) {
+            pumpCapturedVideos()
+            return
+        }
         if(importingFromGoPro||exporting||recording||busy){
             importStatus.text="ჯერ მიმდინარე გადაღება ან ვიდეოს დამუშავება დაასრულე"
             return
@@ -644,8 +656,8 @@ class MainActivity : Activity() {
         // Drive uploads run on their own worker thread and use immutable queued files.
         // A previous guest's upload must NEVER block the next shutter/motor START.
         // Only GoPro capture, import and video export are mutually exclusive here.
-        if (busy || exporting || reservingLink || recording || importingFromGoPro) {
-            boothUi.showMessage("ჯერ დაასრულე მიმდინარე გადაღება ან MP4-ის დამუშავება")
+        if (busy || reservingLink || recording) {
+            boothUi.showMessage("GoPro გადაღება ან START/STOP ბრძანება მიმდინარეობს")
             return
         }
         // The existing GoPro v0.7 uses a separate Wi-Fi preview capture in SD-less mode.
@@ -666,6 +678,7 @@ class MainActivity : Activity() {
             return
         }
         if(useCamera){
+            interruptDownloadForNextCapture()
             session=null;api.clearSession()
             outputFile=null;api.clearExportedFile()
             videoInput=null
@@ -692,6 +705,7 @@ class MainActivity : Activity() {
                     boothUi.showStopped()
                     boothUi.showMessage("GoPro START ვერ დადასტურდა; პლატფორმა არ დატრიალებულა")
                     refresh()
+                    pumpCapturedVideos()
                     return@runOnUiThread
                 }
                 syncing360=true
@@ -743,9 +757,8 @@ class MainActivity : Activity() {
                 busy=false
                 recording=!ok
                 if (ok) {
-                    state.text="GoPro გადაღება დასრულდა. იწყება microSD-დან გადმოტანა…"
-                    showCaptureShareDialog(captureStartedAtMs)
-                    startGoProImport(true)
+                    state.text="GoPro გადაღება დასრულდა. ვიდეო რიგშია, შეგიძლიათ შემდეგი გადაიღოთ."
+                    captureStoppedSuccessfully()
                 } else state.text="GoPro STOP ვერ დადასტურდა — გადაამოწმე კამერა"
                 refresh()
             } }
@@ -969,7 +982,9 @@ class MainActivity : Activity() {
 
     private fun updatePendingLabel() {
         if (::pendingLabel.isInitialized)
-            pendingLabel.text = (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
+            pendingLabel.text = "🎬 გადმოსატანი/დასამუშავებელი ჩანაწერები: ${captures.count()}.\n" +
+                (if (importingFromGoPro) "📥 GoPro-დან გადმოტანა მიმდინარეობს — START ხელმისაწვდომია.\n" else "") +
+                (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
                 "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო.\n" +
                 "SMS გაგზავნის მოლოდინში: ${guestDelivery.pendingCount()}." +
                 (if(lastSmsResult.isNotBlank()) "\n"+lastSmsResult else "") +
@@ -1049,7 +1064,7 @@ class MainActivity : Activity() {
         lengthLabel.text = "${p.slowSeconds} წამი"
         planView.text = "მზა ვიდეო: ${p.slowStartSeconds} წმ ჩვეულებრივ + ${p.slowSeconds} წმ შენელებული + ${p.normalAfterSeconds} წმ ჩვეულებრივ = ${p.finalSeconds} წმ\nკამერის რეალური გადაღება: ${String.format(Locale.US, "%.3f", p.realCaptureSeconds)} წმ (თეორიული)"
         val sdMode = !::storageSelector.isInitialized || storageSelector.checkedRadioButtonId == 1001
-        start.isEnabled = (connected || !sdMode || recording) && !busy && !exporting
+        start.isEnabled = (connected || !sdMode || recording) && !busy
         if (::exportButton.isInitialized) exportButton.isEnabled = videoInput != null && !exporting
         if (::saveButton.isInitialized) saveButton.isEnabled = outputFile != null && !exporting
         if (::shareButton.isInitialized) shareButton.isEnabled = session != null
@@ -1067,10 +1082,7 @@ class MainActivity : Activity() {
             return
         }
         if (!connected) { state.text = "ჯერ Bluetooth-ით დაუკავშირდი GoPro-ს"; return }
-        if (exporting) {
-            state.text = "ჯერ მიმდინარე ვიდეოს დამუშავება დაასრულე."
-            return
-        }
+        interruptDownloadForNextCapture()
         session = null; api.clearSession()
         outputFile = null; api.clearExportedFile()
         videoInput = null
@@ -1082,7 +1094,7 @@ class MainActivity : Activity() {
         state.text = "კამერისთვის START ბრძანების გაგზავნა…"
         ble.shutter(true) { ok -> runOnUiThread {
             busy = false
-            if (!ok) { state.text = "START ვერ დადასტურდა"; refresh(); return@runOnUiThread }
+            if (!ok) { state.text = "START ვერ დადასტურდა"; refresh(); pumpCapturedVideos(); return@runOnUiThread }
             recording = true
             val millis = (p.realCaptureSeconds * 1000).toLong()
             val task = Runnable { stopRecording() }
@@ -1151,10 +1163,7 @@ class MainActivity : Activity() {
             if (ok) recording = false
             state.text = if (ok) "გადაღება დასრულდა. ფაილი GoPro-ის SD ბარათზეა." else "STOP ვერ დადასტურდა — გადაამოწმე კამერა და სცადე STOP ხელახლა"
             refresh()
-            if (ok) {
-                showCaptureShareDialog(captureStartedAtMs)
-                startGoProImport(true)
-            }
+            if (ok) captureStoppedSuccessfully()
         } }
     }
     private fun exportSelected(captureId:Long? = null) {
