@@ -559,7 +559,7 @@ class SlowMoApp:
             return
         if self._settings_dirty:
             try:
-                self._current_spec()
+                self._current_settings()
             except ValueError as exc:
                 messagebox.showerror('შენელების პარამეტრები', str(exc))
                 return
@@ -577,11 +577,17 @@ class SlowMoApp:
             out.mkdir(parents=True, exist_ok=True)
             if not out.is_dir():
                 raise ValueError('საქაღალდე მიუწვდომელია.')
-            specs = {key: parse_segments(item.segments) for key, item in self.items.items()}
-            for key, segments in specs.items():
-                item = self.items[key]
-                if item.duration:
-                    validate_duration(segments, item.duration)
+            if any(item.duration is None for item in self.items.values()):
+                raise ValueError(
+                    'მოიცადე, სანამ ყველა ვიდეოს ხანგრძლივობა შემოწმდება. '
+                    'თუ რომელიმეზე შემოწმების შეცდომაა, თავიდან დაამატე MP4.')
+            specs = {}
+            for key, item in self.items.items():
+                try:
+                    timeline = plan_timeline(item.duration, *item.settings)
+                    specs[key] = list(timeline.segments)
+                except ValueError as exc:
+                    raise ValueError(f'{item.path.name}: {exc}') from exc
             fps = int(self.fps_var.get())
             crf = int(self.quality_var.get().split('CRF ')[-1].rstrip(')'))
         except (ValueError, OSError) as e:
@@ -662,7 +668,8 @@ class SlowMoApp:
                     _, key, duration = event
                     if key in self.items:
                         self.items[key].duration = duration
-                        self._refresh_row(key)
+                        self._replan(key)
+                        self._update_segment_preview()
                 elif kind == 'probe_error':
                     _, key, err = event
                     if key in self.items:
