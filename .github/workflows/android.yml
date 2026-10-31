@@ -1,7 +1,7 @@
-name: MOMENTO 360 v1.5 Capture Queue APK
+name: MOMENTO 360 v1.6 Safe Recovery APK
 on:
   push:
-    branches: [momento360-v1.5-capture-queue]
+    branches: [momento360-v1.6-recovery]
   workflow_dispatch:
 jobs:
   build:
@@ -23,6 +23,6 @@ jobs:
         run: gradle :app:assembleDebug --stacktrace --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO360-v1.5-CaptureQueue-APK
+          name: MOMENTO360-v1.6-SafeRecovery-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
