@@ -1,0 +1,58 @@
+name: MOMENTO Windows Batch SlowMo - portable EXE
+
+on:
+  push:
+    branches: [momento-windows-batch-slowmo]
+    paths:
+      - 'windows_batch_slowmo/**'
+      - '.github/workflows/windows_batch_slowmo.yml'
+  workflow_dispatch:
+
+jobs:
+  windows-exe:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows_batch_slowmo
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+      - name: Install Python build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller==6.16.0 imageio-ffmpeg==0.6.0
+      - name: Run engine unit tests
+        run: |
+          python -m unittest discover -s tests -v
+      - name: Bundle Windows FFmpeg into a portable EXE
+        run: |
+          $ffmpeg = (python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
+          Write-Host "Embedded FFmpeg: $ffmpeg"
+          if (!(Test-Path $ffmpeg)) { throw "FFmpeg binary missing" }
+          $encoders = & $ffmpeg -hide_banner -encoders 2>&1 | Out-String
+          if (-not $encoders.Contains("libx264")) { throw "This FFmpeg build lacks libx264" }
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MOMENTO_Batch_SlowMo --add-binary "$ffmpeg;." app.py
+          if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
+          if (!(Test-Path "dist/MOMENTO_Batch_SlowMo.exe")) { throw "Executable not produced" }
+      - name: Real on-Windows video rendering smoke test
+        run: |
+          New-Item -ItemType Directory -Force -Path "test_output" | Out-Null
+          $ffmpeg = (python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
+          & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=320x180:rate=60" -t 5 -c:v libx264 -pix_fmt yuv420p "test_output/gopro_input.mp4"
+          if ($LASTEXITCODE -ne 0) { throw "Could not create test MP4" }
+          & ".\dist\MOMENTO_Batch_SlowMo.exe" --verify "test_output/gopro_input.mp4" "test_output/MOMENTO_test.mp4"
+          if ($LASTEXITCODE -ne 0) { throw "Windows EXE rendering test failed" }
+          if (!(Test-Path "test_output/MOMENTO_test.mp4")) { throw "Rendered test video not found" }
+          & $ffmpeg -hide_banner -loglevel error -i "test_output/MOMENTO_test.mp4" -f null -
+          if ($LASTEXITCODE -ne 0) { throw "Rendered MP4 decode check failed" }
+          Write-Host "Windows EXE video render smoke test passed"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MOMENTO-Batch-SlowMo-Windows-EXE
+          path: windows_batch_slowmo/dist/MOMENTO_Batch_SlowMo.exe
+          if-no-files-found: error
+          retention-days: 30
