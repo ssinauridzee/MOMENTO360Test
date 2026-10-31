@@ -97,6 +97,40 @@ class CaptureQueue(private val context:Context) {
         item.put("error",reason.take(180))
         save(all)
     }
+    /**
+     * Import queue records safely from a backup made while the old v1.5
+     * remains installed. Never silently drop an existing capture.
+     */
+    @Synchronized fun restoreFromBackup(json:String):Int {
+        val incoming=JSONArray(json)
+        require(incoming.length() in 1..500) { "სარეზერვო ფაილში გადაღებების რიგი არასწორია" }
+        val existing=rows()
+        val known=existing.map { it.optLong("id") }.toMutableSet()
+        var added=0
+        for(i in 0 until incoming.length()) {
+            val src=incoming.optJSONObject(i)?:continue
+            val job=fromJson(src)?:continue
+            if(job.id in known)continue
+            // Locally private raw MP4 paths from another Android app cannot be
+            // read: preserve the GoPro microSD job and re-download that MP4.
+            val item=JSONObject()
+                .put("id",job.id)
+                .put("final",job.plan.finalSeconds)
+                .put("from",job.plan.slowStartSeconds)
+                .put("slow",job.plan.slowSeconds)
+                .put("speed",job.plan.speed)
+                .put("raw","")
+                .put("retryAfter",0L)
+                .put("attempts",0)
+                .put("error","")
+            existing.add(item)
+            known.add(job.id)
+            added++
+        }
+        if(added>0)save(existing)
+        return added
+    }
+
     @Synchronized fun remove(id:Long) {
         save(rows().filterNot { it.optLong("id")==id })
     }
