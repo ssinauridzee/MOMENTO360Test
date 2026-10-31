@@ -347,11 +347,11 @@ class SlowMoApp:
                 f'{timeline.segments[0].end:g} წმ → '
                 f'{timeline.slow_playback_seconds:g} წმ შენელება')
             self.timeline_preview.configure(
-                text=(f'{item.path.name} • ორიგინალი {item.duration:g} წმ\\n'
-                      f'▶ {timeline.intro:g} წმ ჩვეულებრივი დასაწყისი\\n'
+                text=(f'{item.path.name} • ორიგინალი {item.duration:g} წმ\n'
+                      f'▶ {timeline.intro:g} წმ ჩვეულებრივი დასაწყისი\n'
                       f'▶ {timeline.slow_playback_seconds:g} წმ შენელებული '
-                      f'({speed:g}×)\\n'
-                      f'▶ {timeline.outro:g} წმ ჩვეულებრივი დასასრული\\n'
+                      f'({speed:g}×)\n'
+                      f'▶ {timeline.outro:g} წმ ჩვეულებრივი დასასრული\n'
                       f'✓ საბოლოოდ: ≈ {timeline.final_seconds:g} წმ'))
             if not manual:
                 self._set_auto_tail_display(f'{timeline.outro:g}')
