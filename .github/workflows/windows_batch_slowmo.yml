@@ -35,7 +35,8 @@ jobs:
           if (!(Test-Path $ffmpeg)) { throw "FFmpeg binary missing" }
           $encoders = & $ffmpeg -hide_banner -encoders 2>&1 | Out-String
           if (-not $encoders.Contains("libx264")) { throw "This FFmpeg build lacks libx264" }
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MOMENTO_Batch_SlowMo --add-binary "$ffmpeg;." app.py
+          Copy-Item -LiteralPath $ffmpeg -Destination "ffmpeg.exe" -Force
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MOMENTO_Batch_SlowMo --add-binary "ffmpeg.exe;." app.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed" }
           if (!(Test-Path "dist/MOMENTO_Batch_SlowMo.exe")) { throw "Executable not produced" }
       - name: Real on-Windows video rendering smoke test
@@ -45,7 +46,7 @@ jobs:
           & $ffmpeg -hide_banner -loglevel error -y -f lavfi -i "testsrc2=size=320x180:rate=60" -t 5 -c:v libx264 -pix_fmt yuv420p "test_output/gopro_input.mp4"
           if ($LASTEXITCODE -ne 0) { throw "Could not create test MP4" }
           $exe = (Resolve-Path ".\dist\MOMENTO_Batch_SlowMo.exe").Path
-          $job = Start-Process -FilePath $exe -ArgumentList @("--verify","test_output/gopro_input.mp4","test_output/MOMENTO_test.mp4") -Wait -PassThru
+          $job = Start-Process -FilePath $exe -ArgumentList @("--verify","test_output/gopro_input.mp4","test_output/MOMENTO_test.mp4") -WorkingDirectory (Get-Location).Path -Wait -PassThru
           if ($job.ExitCode -ne 0) { throw "Windows EXE rendering test failed with exit code $($job.ExitCode)" }
           if (!(Test-Path "test_output/MOMENTO_test.mp4")) { throw "Rendered test video not found" }
           & $ffmpeg -hide_banner -loglevel error -i "test_output/MOMENTO_test.mp4" -f null -
