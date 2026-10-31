@@ -8,6 +8,9 @@ on:
       - '.github/workflows/windows_batch_slowmo.yml'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   windows-exe:
     runs-on: windows-latest
@@ -58,3 +61,22 @@ jobs:
           path: windows_batch_slowmo/dist/MOMENTO_Batch_SlowMo.exe
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish EXE to public GitHub Releases (no ChatGPT file links)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "momento-batch-slowmo-v1.0"
+          $asset = "dist/MOMENTO_Batch_SlowMo.exe"
+          if (!(Test-Path $asset)) { throw "EXE missing" }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLower()
+          "$hash  MOMENTO_Batch_SlowMo.exe" | Set-Content -Path "dist/MOMENTO_Batch_SlowMo.exe.sha256" -Encoding ascii
+          $files = @($asset, "dist/MOMENTO_Batch_SlowMo.exe.sha256")
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $files --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            gh release create $tag $files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Batch SlowMo - Windows EXE" --notes "Portable Windows 10/11 64-bit program. Includes FFmpeg. Add multiple GoPro MP4 files, choose slow-motion intervals, export all processed videos to one folder for Google Drive sharing. Original videos remain unchanged. Built and smoke-tested on Windows." --latest=false
+          }
+          if ($LASTEXITCODE -ne 0) { throw "GitHub Release publishing failed" }
+          Write-Host "Direct download: https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/MOMENTO_Batch_SlowMo.exe"
