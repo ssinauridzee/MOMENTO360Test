@@ -61,6 +61,11 @@ class SlowMoApp:
         self.failed = 0
         self.current_file = ''
         self.interval_var = tk.StringVar(value='3-5@0.25')
+        self.slow_start_var = tk.StringVar(value='3')
+        self.slow_length_var = tk.StringVar(value='2')
+        self.slow_speed_var = tk.StringVar(value='0.25× — 4-ჯერ ნელა')
+        self.extra_intervals_var = tk.StringVar(value='')
+        self.preview_var = tk.StringVar(value='3–5 წმ → 8 წმ ნელი ვიდეო')
         self.output_var = tk.StringVar(value=str(Path.home() / 'Videos' / 'MOMENTO_MERIA_READY'))
         self.fps_var = tk.StringVar(value='60')
         self.quality_var = tk.StringVar(value='მაღალი (CRF 20)')
@@ -68,6 +73,10 @@ class SlowMoApp:
         self.file_progress_var = tk.DoubleVar(value=0)
         self.global_progress_var = tk.DoubleVar(value=0)
         self._build_ui()
+        for field in (self.slow_start_var, self.slow_length_var,
+                      self.slow_speed_var, self.extra_intervals_var):
+            field.trace_add('write', self._update_segment_preview)
+        self._update_segment_preview()
         self.root.after(80, self._poll)
         self.root.protocol('WM_DELETE_WINDOW', self._on_close)
 
@@ -128,9 +137,21 @@ class SlowMoApp:
         body.pack(fill=tk.BOTH, expand=True)
         left = tk.Frame(body, bg=PANEL, padx=16, pady=15)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 11))
-        right = tk.Frame(body, bg=PANEL, padx=17, pady=16, width=330)
-        right.pack(side=tk.RIGHT, fill=tk.Y)
-        right.pack_propagate(False)
+        right_outer = tk.Frame(body, bg=PANEL, width=350)
+        right_outer.pack(side=tk.RIGHT, fill=tk.Y)
+        right_outer.pack_propagate(False)
+        right_scrollbar = ttk.Scrollbar(right_outer, orient='vertical')
+        right_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        right_canvas = tk.Canvas(right_outer, bg=PANEL, highlightthickness=0,
+                                 yscrollcommand=right_scrollbar.set)
+        right_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        right_scrollbar.configure(command=right_canvas.yview)
+        right = tk.Frame(right_canvas, bg=PANEL, padx=17, pady=16)
+        right_window = right_canvas.create_window((0, 0), window=right, anchor='nw')
+        right.bind('<Configure>', lambda e: right_canvas.configure(
+            scrollregion=right_canvas.bbox('all')))
+        right_canvas.bind('<Configure>', lambda e: right_canvas.itemconfigure(
+            right_window, width=e.width))
 
         self._label(left, '1. ვიდეოების სია', 15, TEXT, True)
         toolbar = tk.Frame(left, bg=PANEL)
