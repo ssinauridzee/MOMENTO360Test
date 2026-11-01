@@ -881,9 +881,12 @@ class MainActivity : Activity() {
 
     /** Prioritise the shutter: pause a large Wi-Fi copy and keep its .partial bytes. */
     private fun interruptDownloadForNextCapture() {
+        // Keep shutter first: close a retained GoPro Wi-Fi request even between
+        // imports, so the next BLE START is never waiting on network teardown.
+        importer.pause()
+        importer.releaseWifi()
         if(queuedImportId!=null) {
             downloadGeneration++
-            importer.pause()
             queuedImportId=null
             importingFromGoPro=false
             importStatus.text="📥 ჩამოტვირთვა შეჩერებულია ახალი გადაღებისთვის; განახლდება STOP-ის შემდეგ."
@@ -897,7 +900,10 @@ class MainActivity : Activity() {
             importingFromGoPro || importer.isBusy() || exporting) return
         if (!getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
             .getBoolean("approved",true)) return
-        val job=captures.oldest() ?: return
+        val job=captures.oldest() ?: run {
+            importer.releaseWifi() // All queued GoPro media have been transferred.
+            return
+        }
         if(android.os.SystemClock.elapsedRealtime()<captureIdleUntilMs)return
         if(System.currentTimeMillis()<job.retryAfter)return
         val raw=job.localRaw(filesDir)
