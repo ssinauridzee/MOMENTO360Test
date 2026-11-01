@@ -138,6 +138,7 @@ class Momento360Api(private val context: Context) {
                 }){"არასწორი MP4 ფაილი"}
                 var restarted=false
                 var id=""
+                main.post { progress("Drive-ზე ატვირთვის დაწყება: ${total/1024/1024} MB") }
                 while(id.isBlank()){
                     val init=request("POST","/drive/start/${session.token}",
                         JSONObject().put("total",total).toString().toByteArray(Charsets.UTF_8),
@@ -193,7 +194,7 @@ class Momento360Api(private val context: Context) {
             while(offset<total){
                 try{
                     input.channel.position(offset)
-                    val n=minOf(1048576L,total-offset).toInt()
+                    val n=minOf(8L*1024L*1024L,total-offset).toInt()
                     val bytes=ByteArray(n)
                     var got=0
                     while(got<n){
@@ -203,7 +204,7 @@ class Momento360Api(private val context: Context) {
                     }
                     val c=webConnection(URL(url))
                     try{
-                        c.requestMethod="PUT";c.connectTimeout=18000;c.readTimeout=45000
+                        c.requestMethod="PUT";c.connectTimeout=18000;c.readTimeout=70000
                         c.instanceFollowRedirects=false
                         c.setRequestProperty("Content-Type","video/mp4")
                         c.setRequestProperty("Content-Range","bytes ${offset}-${offset+n-1}/${total}")
