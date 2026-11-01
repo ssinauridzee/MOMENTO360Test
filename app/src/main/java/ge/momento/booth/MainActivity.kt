@@ -865,6 +865,7 @@ class MainActivity : Activity() {
         queuedImportId=job.id
         refresh()
         importStatus.text="📥 რიგში №1 — GoPro-ს MP4-ის ჩამოტვირთვა. START ნებისმიერ დროს შეგიძლია."
+        val attempted=java.util.concurrent.atomic.AtomicBoolean(false)
         fun releaseIfCurrent() {
             if(downloadGeneration==generation && queuedImportId==job.id) {
                 queuedImportId=null
@@ -873,7 +874,7 @@ class MainActivity : Activity() {
             }
         }
         val beginDownload:()->Unit = begin@{
-            if(downloadGeneration!=generation)return@begin
+            if(downloadGeneration!=generation || !attempted.compareAndSet(false,true))return@begin
             if(recording || busy || pending360 || syncing360) {
                 releaseIfCurrent()
                 return@begin
@@ -932,6 +933,14 @@ class MainActivity : Activity() {
                 sequential=true,
                 pendingCount=captures.all().count { it.localRaw(filesDir)==null })
         }
+        // BLE Wi-Fi enable/credential callbacks can time out or never complete
+        // on some HERO9 firmware. A watchdog must release the capture queue.
+        handler.postDelayed({
+            if(downloadGeneration==generation && !attempted.get()) {
+                importStatus.text="GoPro BLE-ის პასუხი დაგვიანდა; Wi-Fi-ს პირდაპირ ვუკავშირდებით…"
+                beginDownload()
+            }
+        },8500L)
         if(connected) {
             ble.enableWifiAp { ok -> runOnUiThread {
                 if(downloadGeneration!=generation)return@runOnUiThread
