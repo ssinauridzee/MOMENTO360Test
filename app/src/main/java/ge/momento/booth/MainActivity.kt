@@ -1149,13 +1149,20 @@ class MainActivity : Activity() {
     private fun autoProcessQueues() {
         if (::guestDelivery.isInitialized) pumpQueuedSms()
         if (!::preparedVideos.isInitialized || !::pendingUploads.isInitialized ||
-            uploading || reservingLink || reservingPrepared || recording || exporting ||
-            importingFromGoPro || busy || isFinishing) return
+            uploading || reservingLink || reservingPrepared || isFinishing) return
+        if(android.os.SystemClock.elapsedRealtime()<networkRetryAfterMs)return
         if (pendingUploads.size()>0) {
             uploadNextPending()
             return
         }
         val file=preparedVideos.all().firstOrNull() ?: return
+        // Recover from a crash after pendingUploads.add but before
+        // preparedVideos.remove. Never create a duplicate Drive session.
+        if(pendingUploads.all().any{it.file.name==file.name}){
+            preparedVideos.remove(file)
+            autoProcessQueues()
+            return
+        }
         if (!api.hasKey()) {
             linkStatus.text="ვიდეო დაცულია ტელეფონში. Google Drive-ისთვის შეიყვანე WordPress 360 API გასაღები."
             return
@@ -1166,9 +1173,12 @@ class MainActivity : Activity() {
             reservingPrepared=false
             outcome.onSuccess { s ->
                 try {
-                    pendingUploads.add(s,file)
                     guestDelivery.attachSession(file.name,s)
+                    pendingUploads.add(s,file)
                     preparedVideos.remove(file)
+                    networkFailureCount=0
+                    networkRetryAfterMs=0L
+                    networkError=""
                     if (outputFile?.absolutePath == file.absolutePath) {
                         session=s
                         api.saveSession(s)
@@ -1180,7 +1190,11 @@ class MainActivity : Activity() {
                     linkStatus.text="ვიდეო შენახულია, მაგრამ ატვირთვის რიგის შეცდომაა: ${e.message}"
                 }
             }.onFailure { e ->
-                linkStatus.text="ვიდეო ტელეფონში დაცულია; ბმული ჯერ ვერ შეიქმნა: ${e.message}. კავშირის აღდგენისას ავტომატურად განმეორდება."
+                networkFailureCount=(networkFailureCount+1).coerceAtMost(8)
+                val seconds=(3L shl networkFailureCount).coerceAtMost(120L)
+                networkRetryAfterMs=android.os.SystemClock.elapsedRealtime()+seconds*1000L
+                networkError="ბმულის შექმნა: ${e.message}; განმეორება ~${seconds} წმ"
+                linkStatus.text="ვიდეო ტელეფონში დაცულია; ${networkError}"
                 updatePendingLabel()
             }
         }
@@ -1235,7 +1249,10 @@ class MainActivity : Activity() {
 
     /** Sequential, resumable uploads. A failure leaves the job saved until retry. */
     private fun uploadNextPending() {
-        if (uploading || exporting || recording) return
+        // Cellular Drive upload is independent from GoPro shutter, BLE,
+        // Wi-Fi transfer and Media3 export; never block the next guest.
+        if (uploading || isFinishing) return
+        if(android.os.SystemClock.elapsedRealtime()<networkRetryAfterMs)return
         val job = pendingUploads.all().firstOrNull()
         if (job == null) {
             updatePendingLabel()
@@ -1243,6 +1260,7 @@ class MainActivity : Activity() {
             return
         }
         uploading = true
+        stage="Google Drive-ზე MP4-ის ატვირთვა"
         refresh()
         if (session?.token == job.session.token)
             linkStatus.text = "იწყება შენახული ვიდეოს ატვირთვა…\n${job.session.url}"
@@ -1252,16 +1270,27 @@ class MainActivity : Activity() {
         }, { result ->
             uploading = false
             result.onSuccess { url ->
-                pendingUploads.remove(job.session.token)
+                // Persist SMS eligibility before releasing the upload session,
+                // preventing a crash from losing a guest's post-upload SMS.
                 guestDelivery.markUploaded(job.session.token)
+                pendingUploads.remove(job.session.token)
+                networkFailureCount=0
+                networkRetryAfterMs=0L
+                networkError=""
+                stage="Drive ვიდეო მზადაა • SMS რიგშია"
                 pumpQueuedSms()
                 if (session?.token == job.session.token)
                     linkStatus.text = "ვიდეო ატვირთულია და ხელმისაწვდომია! 💖\n$url"
                 updatePendingLabel()
                 handler.post { autoProcessQueues() }
             }.onFailure { e ->
+                networkFailureCount=(networkFailureCount+1).coerceAtMost(8)
+                val seconds=(3L shl networkFailureCount).coerceAtMost(120L)
+                networkRetryAfterMs=android.os.SystemClock.elapsedRealtime()+seconds*1000L
+                networkError="Drive ატვირთვა: ${e.message}; განმეორება ~${seconds} წმ"
+                stage="Drive ატვირთვა შეჩერებულია • ვიდეო რიგში დაცულია"
                 if (session?.token == job.session.token)
-                    linkStatus.text = "ატვირთვა ვერ დასრულდა: ${e.message}\nვიდეო შენახულია რიგში და ავტომატურად განმეორდება, როცა ინტერნეტი ხელმისაწვდომი იქნება."
+                    linkStatus.text = "ატვირთვა ვერ დასრულდა: ${e.message}\nვიდეო რიგში დაცულია; ხელახლა ცდა ~${seconds} წამში."
                 updatePendingLabel()
             }
             refresh()
