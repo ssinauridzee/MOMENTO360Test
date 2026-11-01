@@ -35,6 +35,19 @@ class GoProMediaImporter(private val context: Context) {
     private val finishOnce=AtomicBoolean(false)
     @Volatile private var busy=false
     private var callback:ConnectivityManager.NetworkCallback?=null
+    @Volatile private var activeNetwork:Network?=null
+    @Volatile private var retainedNetwork:Network?=null
+    @Volatile private var keepWifiForQueue=false
+
+    /** Reuse one Android Wi-Fi permission/connection across queued clips;
+     * release on new camera START or when the camera queue is empty. */
+    @Synchronized fun releaseWifi() {
+        val old=callback
+        callback=null
+        retainedNetwork=null
+        activeNetwork=null
+        if(old!=null)runCatching{manager.unregisterNetworkCallback(old)}
+    }
     /** Fast mode downloads HERO9's much smaller LRV proxy (reduced visual quality). */
     fun isFastMode():Boolean = prefs.getBoolean("fast_lrv",true)
     fun setFastMode(enabled:Boolean) {
@@ -88,21 +101,25 @@ class GoProMediaImporter(private val context: Context) {
     private fun status(out:(String)->Unit,message:String){handler.post{out(message)}}
     private fun finish(cb:(Result<File>)->Unit,result:Result<File>){
         if(!finishOnce.compareAndSet(false,true))return
-        val old=callback;callback=null
-        if(old!=null)runCatching{manager.unregisterNetworkCallback(old)}
+        if(result.isSuccess && !cancelled.get() && keepWifiForQueue) {
+            retainedNetwork=activeNetwork
+        }else releaseWifi()
         busy=false
         handler.post{cb(result)}
     }
     fun downloadLatest(startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean=false,pendingCount:Int=1){
         if(busy){done(Result.failure(IllegalStateException("უკვე მიმდინარეობს GoPro-დან გადმოტანა")));return}
         busy=true;cancelled.set(false);finishOnce.set(false)
+        keepWifiForQueue=sequential
         status(progress,"GoPro Wi-Fi-ის ძებნა… თუ Android ქსელთან დაკავშირებას გთხოვს, დააჭირე Connect")
         thread(name="momento-wifi-select"){
             status(progress,"ვამოწმებ, უკვე დაკავშირებულია თუ არა ტელეფონი GoPro-ს Wi-Fi-ზე…")
-            val wifi=manager.allNetworks.firstOrNull{net->
+            val wifi=(retainedNetwork?.takeIf{net->
+                runCatching{listMedia(net).isNotEmpty()}.getOrDefault(false)
+            } ?: manager.allNetworks.firstOrNull{net->
                 manager.getNetworkCapabilities(net)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)==true &&
                 runCatching{listMedia(net).isNotEmpty()}.getOrDefault(false)
-            }
+            })
             if(cancelled.get()){
                 finish(done,Result.failure(InterruptedException("ახალი გადაღების გამო გადმოტანა შეჩერდა")));return@thread
             }
@@ -110,6 +127,7 @@ class GoProMediaImporter(private val context: Context) {
                 status(progress,"GoPro-ს Wi-Fi უკვე დაკავშირებულია — ვკითხულობ ვიდეოების სიას…")
                 doDownload(wifi,startedAt,progress,done,sequential,pendingCount);return@thread
             }
+            releaseWifi()
             status(progress,"ტელეფონი GoPro-ს Wi-Fi-ზე არ არის — Android-ს ვთხოვ კამერის ქსელზე გადასვლას…")
             val credentials=saved()
             if(credentials==null){
@@ -153,6 +171,7 @@ class GoProMediaImporter(private val context: Context) {
         }
     }
     private fun doDownload(network:Network,startedAt:Long,progress:(String)->Unit,done:(Result<File>)->Unit,sequential:Boolean,pendingCount:Int){
+        activeNetwork=network
         thread(name="momento-gopro-mp4"){
             val result=runCatching{
                 var problem:Exception?=null
@@ -379,7 +398,6 @@ class GoProMediaImporter(private val context: Context) {
 
     fun close(){
         cancelled.set(true)
-        val old=callback;callback=null
-        if(old!=null)runCatching{manager.unregisterNetworkCallback(old)}
+        releaseWifi()
     }
 }
