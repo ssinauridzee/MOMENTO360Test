@@ -213,72 +213,124 @@ class GoProMediaImporter(private val context: Context) {
 
     private fun listMedia(net:Network):List<Media>{
         val c=connection(net,"/gopro/media/list")
-        try{
-            c.connectTimeout=5500;c.readTimeout=10000
-            if(c.responseCode!=200)error("GoPro API HTTP "+c.responseCode)
+        try {
+            c.connectTimeout=5500;c.readTimeout=11000
+            if(c.responseCode!=200)error("GoPro ფაილების სია HTTP "+c.responseCode)
             val root=JSONObject(c.inputStream.bufferedReader().use{it.readText()})
-            val dirs=root.optJSONArray("media")?:error("GoPro მედია სია მიუწვდომელია")
-            val result=ArrayList<Media>()
+            val dirs=root.optJSONArray("media")?:error("GoPro microSD-ის სია მიუწვდომელია")
+            val originals=ArrayList<Media>()
+            val proxies=HashMap<String,Media>()
             for(i in 0 until dirs.length()){
                 val folder=dirs.optJSONObject(i)?:continue
-                val name=folder.optString("d")
-                if(!name.matches(Regex("[A-Za-z0-9_-]{1,32}")))continue
-                val fs=folder.optJSONArray("fs")?:continue
-                for(j in 0 until fs.length()){
-                    val item=fs.optJSONObject(j)?:continue
-                    val file=item.optString("n")
-                    if(!file.endsWith(".mp4",true)||!file.matches(Regex("[A-Za-z0-9_.-]{4,96}")))continue
-                    result.add(Media(name,file,item.optString("s","0").toLongOrNull()?:0,
-                        item.optString("mod","0").toLongOrNull()?:0))
+                val dir=folder.optString("d")
+                if(!dir.matches(Regex("[A-Za-z0-9_-]{1,32}")))continue
+                val files=folder.optJSONArray("fs")?:continue
+                for(j in 0 until files.length()){
+                    val item=files.optJSONObject(j)?:continue
+                    val filename=item.optString("n")
+                    if(!filename.matches(Regex("[A-Za-z0-9_.-]{4,96}")))continue
+                    val media=Media(dir,filename,
+                        item.optString("s","0").toLongOrNull()?:0,
+                        item.optString("mod","0").toLongOrNull()?:0)
+                    if(filename.endsWith(".mp4",true))originals.add(media)
+                    else if(filename.endsWith(".lrv",true)) {
+                        val id=filename.drop(2).substringBeforeLast('.')
+                        proxies["$dir/$id"]=media
+                    }
                 }
             }
-            return result
+            originals.forEach { video ->
+                val id=video.name.drop(2).substringBeforeLast('.')
+                video.proxy=proxies["${video.dir}/$id"]
+            }
+            return originals
         }finally{c.disconnect()}
     }
-    private fun download(net:Network,video:Media,progress:(String)->Unit):File{
-        val basename=video.dir+"_"+video.name
-        val destination=File(context.filesDir,"MOMENTO_GOPRO_"+basename)
-        val partial=File(context.filesDir,"MOMENTO_GOPRO_"+basename+".partial")
+
+    private fun isValidMp4(file:File):Boolean=runCatching{
+        file.isFile && file.length()>1024 &&
+            file.inputStream().use { input ->
+                val b=ByteArray(12)
+                input.read(b)==12 &&
+                    String(b,4,4,Charsets.US_ASCII)=="ftyp"
+            }
+    }.getOrDefault(false)
+
+    /** Uses Range to resume interrupted transfers. Always keep the original
+     * camera file untouched on microSD; writes private .partial phone file. */
+    private fun download(net:Network,origin:Media,transfer:Media,
+                         progress:(String)->Unit,fast:Boolean):File {
+        val stem=origin.name.substringBeforeLast('.')
+        val suffix=if(fast)"_FAST" else "_FULL"
+        val filename="MOMENTO_GOPRO_${origin.dir}_${stem}${suffix}.mp4"
+        val destination=File(context.filesDir,filename)
+        val partial=File(context.filesDir,filename+".partial")
+        if(isValidMp4(destination) &&
+            (transfer.size<=0 || destination.length()==transfer.size)) {
+            status(progress,"შენახული ვიდეო გამოყენებულია: ${destination.name}")
+            return destination
+        }
         var count=if(partial.exists())partial.length()else 0L
-        if(count>video.size&&video.size>0){partial.delete();count=0}
-        var failed=0
-        while(true){
-            if(cancelled.get())error("GoPro ჩამოტვირთვა შეწყდა")
-            val c=connection(net,"/videos/DCIM/"+video.dir+"/"+video.name)
-            try{
-                c.connectTimeout=10000;c.readTimeout=25000
+        if(transfer.size>0 && count>transfer.size){partial.delete();count=0L}
+        var failures=0
+        var previousPercent=-1L
+        while(true) {
+            if(cancelled.get())throw InterruptedException("ახალი გადაღებისთვის ჩამოტვირთვა შეჩერდა")
+            val c=connection(net,"/videos/DCIM/${transfer.dir}/${transfer.name}")
+            try {
+                c.connectTimeout=8000;c.readTimeout=12000
                 if(count>0)c.setRequestProperty("Range","bytes=$count-")
                 val http=c.responseCode
-                if(http!=200&&http!=206)error("GoPro MP4 HTTP $http")
-                if(count>0&&http==200){count=0;partial.delete()}
-                FileOutputStream(partial,count>0).buffered(128*1024).use{output->
+                if(http!=200 && http!=206)
+                    error("GoPro ${transfer.name}: HTTP $http")
+                if(count>0 && http==200){
+                    count=0L;partial.delete() // Server did not support resume.
+                }
+                if(count>0 && http==206){
+                    val header=c.getHeaderField("Content-Range")?:""
+                    if(!header.startsWith("bytes $count-")) {
+                        count=0L;partial.delete()
+                        throw java.io.IOException("GoPro Range პასუხი არასწორია")
+                    }
+                }
+                val reportedTotal=if(transfer.size>0)transfer.size else
+                    c.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                    ?: c.contentLengthLong.let{ if(it>0)it+count else 0L }
+                if(reportedTotal>512L*1024*1024)
+                    error("GoPro ფაილი 512 MB-ზე დიდია; გამოიყენე სწრაფი რეჟიმი")
+                FileOutputStream(partial,count>0).buffered(256*1024).use{output->
                     c.inputStream.use{input->
-                        val buffer=ByteArray(131072)
-                        while(true){
-                            if(cancelled.get())error("გადმოტანა შეჩერებულია")
-                            val n=input.read(buffer)
-                            if(n<0)break
-                            output.write(buffer,0,n);count+=n
-                            if(count>512L*1024*1024)error("ვიდეო 512 MB-ზე დიდია")
-                            if(video.size>0&&count%(1024*1024)<n)
-                                status(progress,"GoPro-დან გადმოტანა: "+count*100/video.size+"%")
+                        val bytes=ByteArray(256*1024)
+                        while(true) {
+                            if(cancelled.get())throw InterruptedException("ახალი გადაღებისთვის გადმოტანა შეჩერდა")
+                            val got=input.read(bytes)
+                            if(got<0)break
+                            output.write(bytes,0,got)
+                            count+=got
+                            if(count>512L*1024*1024)error("GoPro ფაილი მეტისმეტად დიდია")
+                            val pct=if(reportedTotal>0)count*100/reportedTotal else 0L
+                            if(reportedTotal>0 && pct/5!=previousPercent/5) {
+                                previousPercent=pct
+                                status(progress,"${if(fast)"⚡ სწრაფი LRV" else "🎥 სრული MP4"}: $pct%")
+                            }
                         }
                     }
                 }
-                if(video.size>0&&count!=video.size)error("არასრული MP4: $count / "+video.size)
-                if(partial.length()<1024)error("ცარიელი MP4")
-                if(!partial.inputStream().use{val b=ByteArray(12);it.read(b)==12&&String(b,4,4,Charsets.US_ASCII)=="ftyp"})
-                    error("GoPro ფაილი არ არის MP4")
-                if(destination.exists())destination.delete()
-                check(partial.renameTo(destination)){"ფაილის შენახვის შეცდომა"}
+                if(reportedTotal>0 && count!=reportedTotal)
+                    error("GoPro ვიდეო არასრულია: $count/$reportedTotal")
+                if(!isValidMp4(partial))error("მიღებული ფაილი გამართული MP4 არ არის")
+                if(destination.exists() && !destination.delete())
+                    error("ძველი არასრული MP4 ვერ წაიშალა")
+                check(partial.renameTo(destination)){"GoPro ვიდეო ვერ შეინახა"}
                 return destination
-            }catch(e:Exception){
-                if(cancelled.get()||++failed>=5)throw e
+            }catch(e:Exception) {
+                if(cancelled.get() || e is InterruptedException || ++failures>=3)throw e
                 count=partial.length()
-                Thread.sleep(failed*1200L)
+                Thread.sleep(failures*950L)
             }finally{c.disconnect()}
         }
     }
+
     /** On manual downloads, publish a visible copy to Movies/MOMENTO360.
      * Automatic sessions keep their working files private to avoid filling the phone gallery with 100s of duplicates. */
     private fun publishToGallery(file:File,media:Media,progress:(String)->Unit){
