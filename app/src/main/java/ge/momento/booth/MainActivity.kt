@@ -898,8 +898,24 @@ class MainActivity : Activity() {
         if(android.os.SystemClock.elapsedRealtime()<captureIdleUntilMs)return
         if(System.currentTimeMillis()<job.retryAfter)return
         val raw=job.localRaw(filesDir)
-        if(raw!=null) startQueuedExport(job,raw)
-        else startQueuedImport(job)
+        if(raw!=null) {startQueuedExport(job,raw);return}
+        // Crash recovery: transferred MP4 may already be complete while
+        // CaptureQueue.downloaded was not called before Android killed us.
+        val orphan=importer.recoverUncommitted()
+        if(orphan!=null) {
+            runCatching {
+                captures.downloaded(job.id,orphan)
+                importer.markCommitted(orphan)
+                stage="წინა ჩამოტანილი MP4 აღდგენილია; დამუშავება იწყება"
+            }.onFailure {captureQueueError=it.message ?: "აღდგენის შეცდომა"}
+            if(job.localRaw(filesDir)==null) {
+                pumpCapturedVideos()
+                return
+            }
+            val recovered=captures.oldest()?.localRaw(filesDir)
+            if(recovered!=null){startQueuedExport(job,recovered);return}
+        }
+        startQueuedImport(job)
     }
 
     private fun startQueuedImport(job:CaptureQueue.Job) {
