@@ -903,17 +903,20 @@ class MainActivity : Activity() {
         // CaptureQueue.downloaded was not called before Android killed us.
         val orphan=importer.recoverUncommitted()
         if(orphan!=null) {
-            runCatching {
+            val restored=runCatching {
                 captures.downloaded(job.id,orphan)
                 importer.markCommitted(orphan)
-                stage="წინა ჩამოტანილი MP4 აღდგენილია; დამუშავება იწყება"
-            }.onFailure {captureQueueError=it.message ?: "აღდგენის შეცდომა"}
-            if(job.localRaw(filesDir)==null) {
-                pumpCapturedVideos()
+                stage="ჩამოტანილი MP4 აღდგენილია; დამუშავება იწყება"
+            }
+            if(restored.isFailure) {
+                captureQueueError=restored.exceptionOrNull()?.message ?: "ფაილის აღდგენის შეცდომა"
+                captures.retryLater(job.id,captureQueueError)
                 return
             }
             val recovered=captures.oldest()?.localRaw(filesDir)
             if(recovered!=null){startQueuedExport(job,recovered);return}
+            captures.retryLater(job.id,"აღდგენილი MP4 რიგში ვერ მოიძებნა")
+            return
         }
         startQueuedImport(job)
     }
