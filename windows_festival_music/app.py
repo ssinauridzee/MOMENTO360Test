@@ -47,7 +47,7 @@ class VideoJob:
 class FestivalApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        root.title("MOMENTO — Terjoloba Festival Music")
+        root.title("MOMENTO Happy Music 60 — თერჯოლობა")
         root.geometry("1240x790")
         root.minsize(940, 640)
         root.configure(bg=BG)
@@ -108,8 +108,8 @@ class FestivalApp:
 
         header = tk.Frame(self.root, bg=BG, padx=23, pady=15)
         header.pack(fill=tk.X)
-        self._label(header, "MOMENTO  /  FESTIVAL MUSIC", 23, TEXT, True)
-        self._label(header, "თერჯოლობა • ორიგინალი ხმის წაშლა • მხიარული რენდომ მუსიკა • ყველა ვიდეო ერთად",
+        self._label(header, "MOMENTO  /  HAPPY MUSIC 60", 23, TEXT, True)
+        self._label(header, "თერჯოლობა • 60 განსხვავებული მხიარული მუსიკა • 47 ვიდეოზე გამეორების გარეშე",
                     11, MUTED)
 
         body = tk.Frame(self.root, bg=BG, padx=16)
