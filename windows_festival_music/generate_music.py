@@ -258,7 +258,7 @@ def generate(out:Path, ffmpeg:str):
     for index, track in enumerate(TRACKS):
         print(f"[{index+1:02d}/{len(TRACKS)}] HAPPY {track.name}",
               flush=True)
-        pcm=synthesise(index,*track)
+        pcm=synthesise(index,track.bpm,track.root,track.motif,track.style,track.variant,track.progression)
         with tempfile.TemporaryDirectory() as temp:
             wav=Path(temp)/"original_music.wav"
             with wave.open(str(wav),"wb") as writer:
