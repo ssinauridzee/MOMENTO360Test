@@ -31,6 +31,11 @@ class MainActivity : Activity() {
     private var queuedImportId:Long?=null
     private var downloadGeneration=0
     private var captureQueueError=""
+    private var captureIdleUntilMs=0L
+    private var networkRetryAfterMs=0L
+    private var networkFailureCount=0
+    private var networkError=""
+    private var stage="მზადაა"
 
     private var pendingWifiImport=false
     private var captureStartedAtMs=0L
@@ -813,6 +818,9 @@ class MainActivity : Activity() {
         if(id<=0L)return
         try {
             captures.add(id,selectedPlan ?: plan())
+            // Only access GoPro Wi-Fi after a short quiet gap between guests.
+            captureIdleUntilMs=android.os.SystemClock.elapsedRealtime()+6000L
+            stage="GoPro-ზე შენახულია; ჩამოტანა პაუზას ელოდება"
             state.text="✅ ვიდეო GoPro-ზე შენახულია. ახალი START შეგიძლია დაუყოვნებლივ."
             showCaptureShareDialog(id)
             updatePendingLabel()
@@ -842,6 +850,7 @@ class MainActivity : Activity() {
         if (!getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
             .getBoolean("approved",true)) return
         val job=captures.oldest() ?: return
+        if(android.os.SystemClock.elapsedRealtime()<captureIdleUntilMs)return
         if(System.currentTimeMillis()<job.retryAfter)return
         val raw=job.localRaw(filesDir)
         if(raw!=null) startQueuedExport(job,raw)
@@ -851,6 +860,7 @@ class MainActivity : Activity() {
     private fun startQueuedImport(job:CaptureQueue.Job) {
         if(!wifiPermissionGranted())return
         importingFromGoPro=true
+        stage="GoPro-ს ვიდეოს ჩამოტანა"
         val generation=++downloadGeneration
         queuedImportId=job.id
         refresh()
@@ -891,21 +901,28 @@ class MainActivity : Activity() {
                         // MP4 for THIS capture even though a newer START is underway.
                         // Never discard a successful download solely due to UI generation.
                         result.onSuccess { file ->
-                            runCatching { captures.downloaded(job.id,file) }
-                                .onFailure { captureQueueError=it.message ?: "რიგის შენახვა" }
+                            runCatching {
+                                captures.downloaded(job.id,file)
+                                importer.markCommitted(file)
+                            }.onFailure { captureQueueError=it.message ?: "რიგის შენახვა" }
                         }
                         pumpCapturedVideos()
                     } else {
                         releaseIfCurrent()
                         result.onSuccess { file ->
-                            runCatching { captures.downloaded(job.id,file) }.onFailure { error ->
+                            runCatching {
+                                captures.downloaded(job.id,file)
+                                importer.markCommitted(file)
+                            }.onFailure { error ->
                                 captures.retryLater(job.id,error.message ?: "ფაილის შენახვა")
                                 captureQueueError=error.message ?: "რიგის შეცდომა"
                             }
+                            stage="GoPro გადმოტანილია • Slow Motion-ის მოლოდინი"
                             importStatus.text="📥 ${file.name} ჩამოტანილია; მუშავდება Slow Motion."
                         }.onFailure { error ->
                             captures.retryLater(job.id,error.message ?: "GoPro-ის კავშირი")
                             captureQueueError=error.message ?: "GoPro-ის კავშირი"
+                            stage="GoPro Wi-Fi შეცდომა • ხელახალი ცდა დაგეგმილია"
                             importStatus.text="⚠ ვიდეო GoPro-ს microSD-ზეა. ხელახალი ცდა: ${captureQueueError}"
                         }
                         refresh()
@@ -936,6 +953,7 @@ class MainActivity : Activity() {
 
     private fun startQueuedExport(job:CaptureQueue.Job,source:File) {
         exporting=true
+        stage="Slow Motion MP4-ის დამუშავება"
         refresh()
         mediaLabel.text="Slow Motion: ${source.name} მუშავდება — ახალი გადაღება დაშვებულია."
         exporter.export(Uri.fromFile(source),job.plan,
@@ -950,6 +968,10 @@ class MainActivity : Activity() {
                         guestDelivery.attachFile(job.id,file)
                         preparedVideos.add(file)
                         captures.remove(job.id)
+                        // The full original remains on the GoPro microSD.
+                        // The edited and queued MP4 is safe; free phone storage.
+                        runCatching { source.delete() }
+                        stage="მზა MP4 შენახულია • Drive-ის მოლოდინი"
                         if(!recording && captureStartedAtMs==job.id) {
                             outputFile=file
                             api.saveExportedFile(file)
