@@ -149,7 +149,7 @@ class FestivalApp:
         self._btn(shuffle_actions, "🔀 მუსიკის შემთხვევითი გადანაწილება", self.shuffle, True)
 
         self._label(right, "2. მუსიკის არჩევა", 15, TEXT, True)
-        self._label(right, "MOMENTO-ს 7 ორიგინალი სადღესასწაულო მუსიკა",
+        self._label(right, "MOMENTO-ს 60 ახალი ჰეფი / დენსი / ფესტივალური მელოდია",
                     10, MUTED, pady=(5, 2))
         toggle = tk.Checkbutton(right, text="ჩაშენებული ორიგინალი მუსიკების გამოყენება",
                                 variable=self.use_originals, command=self._refresh_music,
@@ -173,10 +173,10 @@ class FestivalApp:
         self._btn(mbuttons, "+ საკუთარი MP3", self.add_music)
         self._btn(mbuttons, "▶ მოსმენა", self.play_music)
         self._btn(mbuttons, "ამოშლა", self.remove_music)
-        self.music_count = self._label(right, "7 მუსიკა", 10, MUTED)
+        self.music_count = self._label(right, "60 სხვადასხვა მუსიკა", 10, MUTED)
         self._label(right,
-                    "ჩაშენებული ინსტრუმენტალები სპეციალურადაა შექმნილი, "
-                    "გარე ჩანაწერების გარეშე. საკუთარი მუსიკის დამატებისას "
+                     "ახალი მხიარული პოპი, დენსი, ზაფხულის რიტმები, "
+                     "ბრასის და დისკოს ჟღერადობით. საკუთარი მუსიკის დამატებისას "
                     "შეამოწმე გამოყენების ლიცენზია.",
                     9, MUTED, pady=(5, 8))
 
@@ -245,7 +245,11 @@ class FestivalApp:
         for song in self.song_list:
             prefix = "♫ " if song.stem in NAMES else "♪ "
             self.music_list.insert(tk.END, prefix + pretty_music(song))
-        self.music_count.config(text=f"ხელმისაწვდომია {len(self.song_list)} მუსიკა")
+        self.music_count.config(
+            text=f"ხელმისაწვდომია {len(self.song_list)} განსხვავებული მუსიკა • "
+                 f"47 ვიდეოსთვის გამეორება არ იქნება"
+                 if len(self.song_list)>=47 else
+                 f"ხელმისაწვდომია {len(self.song_list)} მუსიკა")
         if not self.running and self.jobs and self.song_list:
             self.shuffle()
 
@@ -358,7 +362,12 @@ class FestivalApp:
         for (key, job), song in zip(self.jobs.items(), allocation):
             job.music = song
             self._refresh_row(key)
-        self.status.set(f"🔀 {len(self.jobs)} ვიდეოს მუსიკა შემთხვევითად განაწილდა.")
+        distinct=len({str(x) for x in allocation})
+        self.status.set(
+            f"🔀 {len(self.jobs)} ვიდეო → {distinct} განსხვავებული მუსიკა; "
+            + ("გამეორება არ არის." if distinct==len(self.jobs)
+               else "ყველაზე განსხვავებული შედეგისთვის დაამატე მეტი მუსიკა.")
+        )
 
     def choose_folder(self):
         if self.running:
@@ -387,6 +396,10 @@ class FestivalApp:
         if not self.song_list:
             messagebox.showerror("მუსიკა", "მინიმუმ ერთი მუსიკა აუცილებელია.")
             return
+        if len(self.jobs)<=len(self.song_list) and len({
+                str(job.music) for job in self.jobs.values() if job.music
+            }) != len(self.jobs):
+            self.shuffle()  # No duplicate music when enough unique tracks exist.
         if any(job.duration is None or job.music is None for job in self.jobs.values()):
             messagebox.showerror("დამუშავება", "ყველა ვიდეოს ხანგრძლივობის შემოწმებას დაელოდე.")
             return
@@ -534,7 +547,7 @@ def ui_test():
         root.update_idletasks()
         assert app.bar.winfo_exists()
         assert app.totalbar.winfo_exists()
-        assert len(app.song_list) == 7, len(app.song_list)
+        assert len(app.song_list) == 60, len(app.song_list)
         assert all(x.is_file() for x in app.song_list)
         assert all(x.stat().st_size > 50000 for x in app.song_list)
         app.jobs["sample"] = VideoJob(Path("sample.mp4"))
@@ -543,6 +556,9 @@ def ui_test():
         app.shuffle()
         assert app.jobs["sample"].music is not None
         app._refresh_row("sample")
+        # Verify 47 distinct tracks are available for all 47 edited videos.
+        choices = random_assignments(47, app.song_list)
+        assert len(choices) == 47 and len(set(choices)) == 47
         return 0
     except Exception:
         import traceback
