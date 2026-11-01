@@ -3,6 +3,11 @@ on:
   push:
     branches: [momento360-v1.8-stable-queue]
   workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: momento360-android-v18-release
+  cancel-in-progress: true
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,3 +31,17 @@ jobs:
           name: MOMENTO360-v1.8-StableFastQueue-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish direct-download MOMENTO 360 v1.8 Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk MOMENTO360-v1.8-Stable-Fast.apk
+          sha256sum MOMENTO360-v1.8-Stable-Fast.apk > MOMENTO360-v1.8-Stable-Fast.apk.sha256
+          TAG="momento360-android-v1.8-stable-fast"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" MOMENTO360-v1.8-Stable-Fast.apk MOMENTO360-v1.8-Stable-Fast.apk.sha256 --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" MOMENTO360-v1.8-Stable-Fast.apk MOMENTO360-v1.8-Stable-Fast.apk.sha256 --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "MOMENTO 360 Android v1.8 - Stable Fast Capture" --notes "Experimental on-device GoPro HERO9 update. Fast LRV proxy switch with full MP4 fallback, nonblocking new shutter capture, persistent capture/SMS queue, smaller 720p H.264 final MP4, larger resumable Drive uploads, error diagnostics and retry. Android debug APK is packaged under a NEW application ID to keep older v1.5-v1.7 data safe; existing video queues do not migrate automatically. Hardware/Drive/SMS end-to-end test still required." --latest=false
+          fi
+          echo "Download: https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/MOMENTO360-v1.8-Stable-Fast.apk"
