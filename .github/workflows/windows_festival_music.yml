@@ -81,7 +81,7 @@ jobs:
           if-no-files-found: error
       - name: Publish direct download on GitHub Releases
         env:
-          GH_TOKEN: \${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $tag="momento-festival-music-v1.0"
           $file="dist/MOMENTO_Festival_Music.exe"
