@@ -50,10 +50,15 @@ class VideoExporter(private val context: Context) {
             done(Result.failure(e)); return
         }
         val requestedMs = ceil(plan.realCaptureSeconds * 1000.0).toLong()
-        if (availableMs < requestedMs) {
-            done(Result.failure(IllegalArgumentException("ჩანაწერი ძალიან მოკლეა: საჭიროა მინიმუმ $requestedMs მწმ, ფაილია $availableMs მწმ")))
+        // HERO9 MP4 duration may be a frame or two shorter than the
+        // theoretical shutter timer. Do not reject an otherwise valid capture
+        // due to a harmless container/timebase rounding difference.
+        if (availableMs + 350L < requestedMs) {
+            done(Result.failure(IllegalArgumentException(
+                "კამერის ვიდეო ზედმეტად მოკლეა: საჭიროა ~$requestedMs მწმ, რეალურად $availableMs მწმ")))
             return
         }
+        val actualClipMs=minOf(requestedMs,availableMs)
         val startUs = plan.slowStartSeconds * 1_000_000L
         val endUs = ((plan.slowStartSeconds + plan.slowSeconds * plan.speed) * 1_000_000L).toLong()
         val provider = object : SpeedProvider {
@@ -65,7 +70,7 @@ class VideoExporter(private val context: Context) {
             }
         }
         val input = MediaItem.Builder().setUri(source)
-            .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setEndPositionMs(requestedMs).build())
+            .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setEndPositionMs(actualClipMs).build())
             .build()
         // Deliverable is optimised for SMS/Drive. The GoPro microSD keeps full
         // camera quality. Never upscale low-resolution LRV proxies.
