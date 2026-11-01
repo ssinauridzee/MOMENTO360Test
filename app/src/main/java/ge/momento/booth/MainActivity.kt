@@ -308,6 +308,20 @@ class MainActivity : Activity() {
         label("GoPro → Google Drive • ავტომატური MP4",19f)
         label("STOP-ის შემდეგ: GoPro MP4 → Slow Motion → Movies/MOMENTO360 → ატვირთვის რიგი. პირველ Wi-Fi დაკავშირებაზე Android-ის დასტური შესაძლოა აუცილებელი იყოს.",13f)
         importStatus=label("GoPro Wi-Fi ჯერ არ შემოწმებულა — მონაცემების შენახვა არ ნიშნავს დაკავშირებას.",14f)
+        CheckBox(this).apply {
+            text="⚡ სწრაფი გაზიარება — მცირე GoPro LRV (დაბალი გარჩევადობა)"
+            setTextColor(Color.WHITE)
+            isChecked=importer.isFastMode()
+            setOnCheckedChangeListener { _,enabled->
+                importer.setFastMode(enabled)
+                importStatus.text=if(enabled)
+                    "⚡ სწრაფი LRV: მცირე ვიდეო, სწრაფი ჩამოტანა; ხარისხი შემცირებულია."
+                    else "🎥 სრული MP4: მაღალი ხარისხი, მაგრამ დიდი ფაილი და ნელი გადმოტანა."
+            }
+            root.addView(this)
+        }
+        label("ღონისძიებისთვის სწრაფი რეჟიმი გამოდგება. ხარისხის პრიორიტეტისთვის გამორთე. " +
+              "GoPro-ზე 1080p / 60 FPS და Standard Bitrate მნიშვნელოვნად ამცირებს სრული MP4-ის ზომას.",12f)
         Button(this).apply {
             text="GoPro Wi-Fi მონაცემები • ერთჯერადი გამართვა"
             root.addView(this)
@@ -389,6 +403,37 @@ class MainActivity : Activity() {
         shareButton = Button(this).apply { text = "ლინკი / QR კოდი / SMS"; root.addView(this); setOnClickListener { openShareDialog() } }
         uploadButton = Button(this).apply { text = "MP4-ის Google Drive-ზე ატვირთვა"; root.addView(this); setOnClickListener { uploadReadyFile() } }
         pendingLabel = label("", 14f)
+        Button(this).apply {
+            text="📋 დეტალური სტატუსი / შეცდომების ჩვენება"
+            root.addView(this)
+            setOnClickListener {
+                val first=captures.oldest()
+                val report=buildString {
+                    appendLine("MOMENTO 360 v1.8")
+                    appendLine("ეტაპი: $stage")
+                    appendLine("GoPro BLE: ${if(connected)"დაკავშირებულია" else "გათიშულია"}")
+                    appendLine("GoPro Wi-Fi: ${if(importer.isBusy())"ჩამოტანა მიმდინარეობს" else "თავისუფალია"}")
+                    appendLine("გადაღება: ${if(recording)"მიმდინარეობს" else "არა"}")
+                    appendLine("რიგში GoPro ვიდეოები: ${captures.count()}")
+                    appendLine("პირველი: ${first?.id ?: "-"}")
+                    appendLine("მისი შეცდომა: ${first?.error?.take(150) ?: "-"}")
+                    appendLine("მზად MP4: ${preparedVideos.size()}")
+                    appendLine("Google Drive რიგში: ${pendingUploads.size()}")
+                    appendLine("SMS რიგში: ${guestDelivery.pendingCount()}")
+                    appendLine("ქსელის შეცდომა: $networkError")
+                    appendLine("GoPro შეცდომა: $captureQueueError")
+                    appendLine("SMS შეცდომა: ${guestDelivery.latestError() ?: lastSmsResult}")
+                    appendLine("სწრაფი რეჟიმი: ${importer.isFastMode()}")
+                }
+                AlertDialog.Builder(this@MainActivity).setTitle("გადაღებების დიაგნოსტიკა")
+                    .setMessage(report)
+                    .setPositiveButton("კოპირება"){_,_->
+                        val cm=getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        cm.setPrimaryClip(ClipData.newPlainText("MOMENTO დიაგნოსტიკა",report))
+                    }
+                    .setNegativeButton("დახურვა",null).show()
+            }
+        }
         Button(this).apply {
             text = "⟳ GoPro ვიდეოების აღდგენა / ჩამოტვირთვის ხელახალი ცდა"
             root.addView(this)
@@ -1225,13 +1270,15 @@ class MainActivity : Activity() {
 
     private fun updatePendingLabel() {
         if (::pendingLabel.isInitialized)
-            pendingLabel.text = "🎬 გადმოსატანი/დასამუშავებელი ჩანაწერები: ${captures.count()}.\n" +
+            pendingLabel.text = "ეტაპი: $stage\n" +
+                "🎬 გადმოსატანი/დასამუშავებელი ჩანაწერები: ${captures.count()}.\n" +
                 (if (importingFromGoPro) "📥 GoPro-დან გადმოტანა მიმდინარეობს — START ხელმისაწვდომია.\n" else "") +
                 (if (uploading) "☁ Google Drive-ზე ატვირთვა მიმდინარეობს ფონურად — ახალი გადაღება შეგიძლია!\n" else "") +
                 "ატვირთვის მოლოდინში: ${pendingUploads.size()} ვიდეო; ბმულის მოლოდინში: ${preparedVideos.size()} ვიდეო.\n" +
                 "SMS გაგზავნის მოლოდინში: ${guestDelivery.pendingCount()}." +
                 (if(captureQueueError.isNotBlank()) "\n⚠ GoPro რიგის შეცდომა: "+captureQueueError else "") +
                 (captures.oldest()?.error?.takeIf{it.isNotBlank()}?.let{"\nბოლო შეცდომა: "+it} ?: "") +
+                (if(networkError.isNotBlank()) "\n⚠ Drive/ინტერნეტი: "+networkError else "") +
                 (if(lastSmsResult.isNotBlank()) "\n"+lastSmsResult else "") +
                 "\nაპლიკაცია არ წაშალო, სანამ რიგები დაცარიელდება."
     }
