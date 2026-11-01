@@ -1,4 +1,4 @@
-name: MOMENTO Terjoloba Festival Music Windows EXE
+name: MOMENTO Happy Music 60 Windows EXE
 on:
   push:
     branches: [momento-windows-festival-music]
@@ -32,14 +32,16 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
-      - name: Generate seven original festival instrumentals
+      - name: Generate 60 different original HAPPY party instrumentals
         run: |
           $ffmpeg=(python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
           Copy-Item -LiteralPath $ffmpeg -Destination "ffmpeg.exe" -Force
           python generate_music.py --out music --ffmpeg "ffmpeg.exe"
           if ($LASTEXITCODE -ne 0) { throw "Music generation failed" }
           $tracks=@(Get-ChildItem "music" -Filter "Terjoloba_*.mp3")
-          if ($tracks.Count -ne 7) { throw "Music catalog incomplete: $($tracks.Count)" }
+          if ($tracks.Count -ne 60) { throw "Music catalog incomplete; expected 60: $($tracks.Count)" }
+          $digests = @($tracks | ForEach-Object { (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash })
+          if (@($digests | Sort-Object -Unique).Count -ne 60) { throw "Duplicate MP3 files detected" }
           foreach ($track in $tracks) {
             & $ffmpeg -hide_banner -loglevel error -i $track.FullName -f null -
             if ($LASTEXITCODE -ne 0) { throw "Bad MP3: $($track.Name)" }
@@ -50,13 +52,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GUI failed" }
       - name: Build standalone EXE with embedded music and FFmpeg
         run: |
-          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MOMENTO_Festival_Music --add-binary "ffmpeg.exe;." --add-data "music;music" app.py
+          python -m PyInstaller --noconfirm --clean --onefile --windowed --name MOMENTO_Happy_Music_60 --add-binary "ffmpeg.exe;." --add-data "music;music" app.py
           if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
-          if (!(Test-Path "dist/MOMENTO_Festival_Music.exe")) { throw "EXE missing" }
+          if (!(Test-Path "dist/MOMENTO_Happy_Music_60.exe")) { throw "EXE missing" }
       - name: Test packaged EXE and replace original video audio
         run: |
           $ffmpeg=(python -c "import imageio_ffmpeg;print(imageio_ffmpeg.get_ffmpeg_exe())").Trim()
-          $exe=(Resolve-Path "dist/MOMENTO_Festival_Music.exe").Path
+          $exe=(Resolve-Path "dist/MOMENTO_Happy_Music_60.exe").Path
           $ui=Start-Process -FilePath $exe -ArgumentList @("--ui-test") -Wait -PassThru
           if ($ui.ExitCode -ne 0) { throw "Packaged GUI did not open" }
           New-Item -ItemType Directory -Path "test_output" -Force | Out-Null
@@ -75,24 +77,36 @@ jobs:
           Write-Host "Original video preserved; audio replaced; GUI passed"
       - uses: actions/upload-artifact@v4
         with:
-          name: MOMENTO-Festival-Music-Windows-EXE
-          path: windows_festival_music/dist/MOMENTO_Festival_Music.exe
+          name: MOMENTO-Happy-Music-60-Windows-EXE
+          path: windows_festival_music/dist/MOMENTO_Happy_Music_60.exe
           retention-days: 30
           if-no-files-found: error
       - name: Publish direct download on GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag="momento-festival-music-v1.0"
-          $file="dist/MOMENTO_Festival_Music.exe"
+          $tag="momento-happy-music-60-v1.1"
+          $file="dist/MOMENTO_Happy_Music_60.exe"
           $hash=(Get-FileHash -Algorithm SHA256 -LiteralPath $file).Hash.ToLower()
-          "$hash  MOMENTO_Festival_Music.exe" | Set-Content "dist/MOMENTO_Festival_Music.exe.sha256" -Encoding ascii
+          "$hash  MOMENTO_Happy_Music_60.exe" | Set-Content "dist/MOMENTO_Happy_Music_60.exe.sha256" -Encoding ascii
           Copy-Item "music/MOMENTO_MUSIC_LICENSE.txt" -Destination "dist/MOMENTO_MUSIC_LICENSE.txt"
-          $assets=@($file,"dist/MOMENTO_Festival_Music.exe.sha256","dist/MOMENTO_MUSIC_LICENSE.txt")
+          # Five listen-before-install clips (one per new happy style).
+          $previewNames=@(
+            "Terjoloba_Happy_Pop_01",
+            "Terjoloba_Party_Dance_02",
+            "Terjoloba_Summer_Bounce_03",
+            "Terjoloba_Festive_Brass_04",
+            "Terjoloba_Disco_Fun_05"
+          )
+          foreach ($n in $previewNames) {
+            Copy-Item "music/$n.mp3" -Destination "dist/PREVIEW_$n.mp3"
+          }
+          $assets=@($file,"dist/MOMENTO_Happy_Music_60.exe.sha256","dist/MOMENTO_MUSIC_LICENSE.txt")
+          $assets+=@($previewNames | ForEach-Object { "dist/PREVIEW_$_.mp3" })
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $assets --repo $env:GITHUB_REPOSITORY --clobber
           } else {
-            gh release create $tag $assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Festival Music v1.0 - Terjoloba" --notes "Offline Windows 10/11 portable EXE with 7 original festive instrumentals. Import edited GoPro MP4s, strip original audio, randomly replace music, export batch videos. Preserves original video bitstream. No subscription." --latest=false
+            gh release create $tag $assets --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "MOMENTO Happy Music 60 v1.1 - Terjoloba" --notes "Offline Windows 10/11 portable EXE with 60 different original HAPPY instrumentals (5 styles: dance-pop, party dance, summer bounce, brass celebration and disco fun). 47 videos get 47 different songs, no repeats. Import edited GoPro MP4s, strip original audio, randomly replace music, export batch videos. Preserves original video bitstream. No subscription." --latest=false
           }
           if ($LASTEXITCODE -ne 0) { throw "Release publishing failed" }
