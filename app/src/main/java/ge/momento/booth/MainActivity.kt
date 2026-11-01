@@ -440,6 +440,9 @@ class MainActivity : Activity() {
             setOnClickListener {
                 captures.oldest()?.let { captures.retryNow(it.id) }
                 captureQueueError=""
+                networkRetryAfterMs=0L
+                networkFailureCount=0
+                networkError=""
                 if(!getSharedPreferences("momento_recovery_v16", MODE_PRIVATE)
                     .getBoolean("approved",true)){
                     showRecoveryConfirm()
@@ -1682,8 +1685,11 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
-        retryLoop?.let{handler.removeCallbacks(it)}
-        retryLoop=null
+        // Keep the retry callback while this Activity remains alive so a quick
+        // switch to Messenger/QR does not freeze the queued Drive and SMS jobs.
+        // Android may still suspend a background app; reopening resumes the
+        // persistent queue. A foreground service would be required for a hard
+        // guarantee across background process death.
         super.onPause()
     }
 
