@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
@@ -97,6 +98,7 @@ class VideoExporter(private val context: Context) {
                 VideoEncoderSettings.Builder().setBitrate(bitrate).build())
             .build()
         val instance = Transformer.Builder(context)
+            .setVideoMimeType(MimeTypes.VIDEO_H264)
             .setEncoderFactory(encoders)
             .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
