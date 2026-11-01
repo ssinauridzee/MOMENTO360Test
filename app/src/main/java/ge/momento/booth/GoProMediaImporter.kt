@@ -40,6 +40,18 @@ class GoProMediaImporter(private val context: Context) {
     fun setFastMode(enabled:Boolean) {
         prefs.edit().putBoolean("fast_lrv",enabled).apply()
     }
+    /** Completed copy recovered after Android process death before queue binding. */
+    fun recoverUncommitted():File? {
+        val names=prefs.all.keys.filter{it.startsWith("pending_fingerprint_")}
+        for(key in names.sorted()){
+            val name=key.removePrefix("pending_fingerprint_")
+            if(!name.matches(Regex("MOMENTO_GOPRO_[A-Za-z0-9_.-]+\\.mp4")))continue
+            val candidate=File(context.filesDir,name)
+            if(isValidMp4(candidate))return candidate
+        }
+        return null
+    }
+
     /** Mark deduplicated ONLY after CaptureQueue safely persisted the file. */
     @Synchronized fun markCommitted(file:File) {
         val fingerprint=prefs.getString("pending_fingerprint_"+file.name,null) ?: return
@@ -199,9 +211,11 @@ class GoProMediaImporter(private val context: Context) {
                 }
                 if(file==null)file=download(network,selected,selected,progress,false)
                 if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
-                check(prefs.edit().putString("pending_fingerprint_"+file.name,selected.fingerprint).commit()){
-                    "ვიდეოს ID ვერ შევინახეთ"
-                }
+                if(sequential){
+                    check(prefs.edit().putString("pending_fingerprint_"+file.name,selected.fingerprint).commit()){
+                        "ვიდეოს ID ვერ შევინახეთ"
+                    }
+                }else recordDelivered(selected.fingerprint)
                 status(progress,"GoPro ვიდეო ტელეფონშია (${file.length()/1024/1024} MB). იწყება Slow Motion…")
                 file
             }
