@@ -16,15 +16,7 @@ from typing import Callable, Sequence
 ALLOWED_VIDEOS = {".mp4", ".mov", ".m4v", ".mkv", ".avi"}
 ALLOWED_MUSIC = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
-NAMES = {
-    "Terjoloba_Sunrise": "თერჯოლობა — მზიანი დილა",
-    "Terjoloba_Celebration": "თერჯოლობა — ზეიმი",
-    "Terjoloba_Happy_Steps": "თერჯოლობა — მხიარული ნაბიჯები",
-    "Terjoloba_Town_Square": "თერჯოლობა — ქალაქის მოედანი",
-    "Terjoloba_Folk_Dance": "თერჯოლობა — საცეკვაო რიტმი",
-    "Terjoloba_Golden_Day": "თერჯოლობა — ოქროს დღე",
-    "Terjoloba_Grand_Finale": "თერჯოლობა — გრანდიოზული ფინალი",
-}
+from catalog import NAMES
 
 
 def bundled_directory() -> Path:
