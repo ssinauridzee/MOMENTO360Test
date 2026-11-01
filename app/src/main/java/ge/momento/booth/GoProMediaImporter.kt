@@ -26,6 +26,7 @@ class GoProMediaImporter(private val context: Context) {
     data class Credentials(val ssid: String, val password: String)
     private data class Media(val dir: String, val name: String, val size: Long, val mod: Long) {
         val fingerprint get() = "$dir/$name/$size/$mod"
+        var proxy: Media? = null
     }
     private val handler=Handler(Looper.getMainLooper())
     private val manager=context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -34,6 +35,17 @@ class GoProMediaImporter(private val context: Context) {
     private val finishOnce=AtomicBoolean(false)
     @Volatile private var busy=false
     private var callback:ConnectivityManager.NetworkCallback?=null
+    /** Fast mode downloads HERO9's much smaller LRV proxy (reduced visual quality). */
+    fun isFastMode():Boolean = prefs.getBoolean("fast_lrv",true)
+    fun setFastMode(enabled:Boolean) {
+        prefs.edit().putBoolean("fast_lrv",enabled).apply()
+    }
+    /** Mark deduplicated ONLY after CaptureQueue safely persisted the file. */
+    @Synchronized fun markCommitted(file:File) {
+        val fingerprint=prefs.getString("pending_fingerprint_"+file.name,null) ?: return
+        recordDelivered(fingerprint)
+        prefs.edit().remove("pending_fingerprint_"+file.name).commit()
+    }
 
     fun isBusy()=busy
 
@@ -173,10 +185,24 @@ class GoProMediaImporter(private val context: Context) {
                 if(selected.size>512L*1024*1024)error("MP4 512 MB-ზე დიდია")
                 if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
                 status(progress,"ჩანაწერი "+selected.name+" მოიძებნა — ვიწერთ…")
-                val file=download(network,selected,progress)
+                var file:File?=null
+                if(isFastMode()){
+                    val originalStem=selected.name.substringBeforeLast(".")
+                    val fallbackName="GL"+originalStem.drop(2)+".LRV"
+                    val proxy=selected.proxy ?: Media(selected.dir,fallbackName,0L,selected.mod)
+                    status(progress,"⚡ სწრაფი LRV რეჟიმი: ${proxy.name}")
+                    file=runCatching{download(network,selected,proxy,progress,true)}
+                        .onFailure{error->
+                            if(cancelled.get())throw InterruptedException("სწრაფი გადმოტანა შეჩერებულია")
+                            status(progress,"LRV მიუწვდომელია (${error.message?.take(80)}). ვცდით სრულ MP4-ს…")
+                        }.getOrNull()
+                }
+                if(file==null)file=download(network,selected,selected,progress,false)
                 if(cancelled.get())throw InterruptedException("ახალი გადაღების გამო ჩამოტვირთვა შეჩერებულია")
-                recordDelivered(selected.fingerprint)
-                status(progress,"GoPro-ს ორიგინალი გადმოტანილია. ახლა შეიქმნება შენელებული საბოლოო MP4…")
+                check(prefs.edit().putString("pending_fingerprint_"+file.name,selected.fingerprint).commit()){
+                    "ვიდეოს ID ვერ შევინახეთ"
+                }
+                status(progress,"GoPro ვიდეო ტელეფონშია (${file.length()/1024/1024} MB). იწყება Slow Motion…")
                 file
             }
             finish(done,result)
