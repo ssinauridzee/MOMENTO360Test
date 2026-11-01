@@ -11,6 +11,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.Presentation
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.Effects
 import androidx.media3.transformer.Transformer
@@ -30,11 +33,17 @@ class VideoExporter(private val context: Context) {
 
     fun export(source: Uri, plan: RecordingPlan, update: (String) -> Unit, done: (Result<File>) -> Unit) {
         if (transformer != null) { done(Result.failure(IllegalStateException("ექსპორტი უკვე მიმდინარეობს"))); return }
-        val availableMs = try {
+        val (availableMs,sourceShortSide) = try {
             val retriever = MediaMetadataRetriever()
             try {
                 retriever.setDataSource(context, source)
-                retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                val ms=retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                    ?.toLongOrNull() ?: 0L
+                val width=retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                    ?.toIntOrNull() ?: 0
+                val height=retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                    ?.toIntOrNull() ?: 0
+                Pair(ms,if(width>0 && height>0)minOf(width,height) else 720)
             } finally { retriever.release() }
         } catch (e: Exception) {
             done(Result.failure(e)); return
@@ -57,9 +66,20 @@ class VideoExporter(private val context: Context) {
         val input = MediaItem.Builder().setUri(source)
             .setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setEndPositionMs(requestedMs).build())
             .build()
+        // Deliverable is optimised for SMS/Drive. The GoPro microSD keeps full
+        // camera quality. Never upscale low-resolution LRV proxies.
+        val shortSide=minOf(sourceShortSide,720).coerceAtLeast(240)
+        val bitrate=when {
+            shortSide<=480 -> 1_100_000
+            shortSide<=600 -> 1_650_000
+            else -> 2_600_000
+        }
         val edited = EditedMediaItem.Builder(input)
             .setRemoveAudio(true)
-            .setEffects(Effects(emptyList(), listOf(SpeedChangeEffect(provider))))
+            .setEffects(Effects(emptyList(), listOf(
+                SpeedChangeEffect(provider),
+                Presentation.createForShortSide(shortSide)
+            )))
             .build()
         val file = File(context.filesDir, "MOMENTO_${System.currentTimeMillis()}.mp4")
         var progressRunnable: Runnable? = null
@@ -72,7 +92,13 @@ class VideoExporter(private val context: Context) {
             if (result.isFailure) file.delete()
             done(result)
         }
-        val instance = Transformer.Builder(context).addListener(object : Transformer.Listener {
+        val encoders=DefaultEncoderFactory.Builder(context)
+            .setRequestedVideoEncoderSettings(
+                VideoEncoderSettings.Builder().setBitrate(bitrate).build())
+            .build()
+        val instance = Transformer.Builder(context)
+            .setEncoderFactory(encoders)
+            .addListener(object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                 update("ვიდეო მზადაა — შეინახე MP4")
                 finish(Result.success(file))
@@ -87,7 +113,7 @@ class VideoExporter(private val context: Context) {
         val timeoutMs = maxOf(120_000L, plan.finalSeconds * 4_000L)
         val holder = ProgressHolder()
         try {
-            update("MP4 დამუშავება იწყება…")
+            update("MP4 დამუშავება იწყება… • ${shortSide}p / ~${bitrate/1000} kbps")
             instance.start(edited, file.absolutePath)
             progressRunnable = object : Runnable {
                 override fun run() {
