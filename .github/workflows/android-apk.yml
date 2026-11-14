@@ -2,6 +2,8 @@ name: Tao Klarjeti Android APK
 on:
   push:
     branches: [tao-klarjeti-app]
+    paths-ignore:
+      - 'tao-klarjeti-guide.apk'
   workflow_dispatch:
 
 permissions:
@@ -12,36 +14,53 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack full Android project
+      - name: Unpack Android app
         run: |
           base64 --decode project.tar.xz.b64 > project.tar.xz
           tar -xJf project.tar.xz
           test -f app/build.gradle
           python3 -m json.tool app/src/main/assets/places.json > /dev/null
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-      - name: Install Android SDK 35
+
+      - name: Install Android command-line tools and SDK 35
         run: |
-          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n1)
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
+          curl -fL --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -qo /tmp/cmdline-tools.zip -d /tmp/android-commandline
+          cp -a /tmp/android-commandline/cmdline-tools/. "$ANDROID_HOME/cmdline-tools/latest/"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" --install 'platforms;android-35' 'build-tools;35.0.0'
+          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+
       - name: Build APK
-        run: gradle --no-daemon assembleDebug
+        run: gradle --no-daemon --stacktrace assembleDebug
+
       - name: Prepare installable APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk tao-klarjeti-guide.apk
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk tao-klarjeti-guide.apk
+          ls -lh tao-klarjeti-guide.apk
+
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
           name: TaoKlarjeti-Android-APK
           path: tao-klarjeti-guide.apk
           retention-days: 30
+
       - name: Publish direct APK download on isolated branch
         run: |
           git config user.name github-actions
