@@ -30,19 +30,21 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Install Android command-line tools and SDK 35
+      - name: Install Android SDK 35
         run: |
           set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
-          mkdir -p "$ANDROID_HOME/cmdline-tools/latest"
-          curl -fL --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
-          unzip -qo /tmp/cmdline-tools.zip -d /tmp/android-commandline
-          cp -a /tmp/android-commandline/cmdline-tools/. "$ANDROID_HOME/cmdline-tools/latest/"
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          test -x "$SDKMANAGER"
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-35" "build-tools;35.0.0"
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager -print -quit 2>/dev/null || true)"
+          if [ -z "$SDKMANAGER" ]; then
+            curl -fL --retry 3 -o /tmp/cmdline-tools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            mkdir -p "$RUNNER_TEMP/cmdtools"
+            unzip -qo /tmp/cmdline-tools.zip -d "$RUNNER_TEMP/cmdtools"
+            SDKMANAGER="$RUNNER_TEMP/cmdtools/cmdline-tools/bin/sdkmanager"
+          fi
+          test -f "$SDKMANAGER"
+          yes | bash "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses >/dev/null || true
+          bash "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-35" "build-tools;35.0.0"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
 
