@@ -1,0 +1,40 @@
+name: Tao Klarjeti Android APK
+on:
+  push:
+    branches: [tao-klarjeti-app]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unpack full Android project
+        run: |
+          base64 --decode project.tar.xz.b64 > project.tar.xz
+          tar -xJf project.tar.xz
+          test -f app/build.gradle
+          python3 -m json.tool app/src/main/assets/places.json > /dev/null
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+      - name: Install Android SDK 35
+        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+      - name: Build APK
+        run: gradle --no-daemon assembleDebug
+      - name: Prepare installable APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk tao-klarjeti-guide.apk
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: TaoKlarjeti-Android-APK
+          path: tao-klarjeti-guide.apk
+          retention-days: 30
