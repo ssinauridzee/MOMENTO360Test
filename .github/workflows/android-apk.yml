@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -22,12 +22,14 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
       - name: Install Android SDK 35
-        run: sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
+        run: |
+          echo "ANDROID_HOME=${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install 'platforms;android-35' 'build-tools;35.0.0'
       - name: Build APK
         run: gradle --no-daemon assembleDebug
       - name: Prepare installable APK
@@ -38,3 +40,10 @@ jobs:
           name: TaoKlarjeti-Android-APK
           path: tao-klarjeti-guide.apk
           retention-days: 30
+      - name: Publish direct APK download on isolated branch
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions[bot]@users.noreply.github.com
+          git add -f tao-klarjeti-guide.apk
+          git commit -m 'Publish built Tao-Klarjeti Android APK'
+          git push origin HEAD:tao-klarjeti-app
