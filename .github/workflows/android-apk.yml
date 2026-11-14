@@ -5,31 +5,37 @@ on:
     paths-ignore:
       - 'tao-klarjeti-guide.apk'
   workflow_dispatch:
-
 permissions:
   contents: write
-
+concurrency:
+  group: tao-android-publish
+  cancel-in-progress: false
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unpack Android app
+      - name: Unpack Android app source
         run: |
           base64 --decode project.tar.xz.b64 > project.tar.xz
           tar -xJf project.tar.xz
-          test -f app/build.gradle
-          python3 -m json.tool app/src/main/assets/places.json > /dev/null
-
+          test -f app/src/main/java/ge/taoklarjeti/guide/MainActivity.java
+          python3 -m json.tool app/src/main/assets/places.json >/dev/null
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Bundle 11 verified offline photos
+        run: |
+          python -m pip install --quiet Pillow
+          python download_photos.py
+          test "$(find app/src/main/assets/images -name 'place_*.jpg' | wc -l)" -eq 11
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.10.2'
-
       - name: Install Android SDK 35
         run: |
           set -euo pipefail
@@ -47,26 +53,23 @@ jobs:
           bash "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --install "platforms;android-35" "build-tools;35.0.0"
           echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
-
-      - name: Build APK
+      - name: Compile Android APK
         run: gradle --no-daemon --stacktrace assembleDebug
-
       - name: Prepare installable APK
         run: |
           cp app/build/outputs/apk/debug/app-debug.apk tao-klarjeti-guide.apk
+          test "$(stat -c%s tao-klarjeti-guide.apk)" -gt 200000
           ls -lh tao-klarjeti-guide.apk
-
-      - name: Upload installable APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TaoKlarjeti-Android-APK
+          name: TaoKlarjeti-Android-APK-v1.1
           path: tao-klarjeti-guide.apk
           retention-days: 30
-
-      - name: Publish direct APK download on isolated branch
+      - name: Publish direct APK on isolated branch
         run: |
           git config user.name github-actions
           git config user.email github-actions[bot]@users.noreply.github.com
           git add -f tao-klarjeti-guide.apk
-          git commit -m 'Publish built Tao-Klarjeti Android APK'
+          git commit -m 'Publish Tao-Klarjeti Android APK v1.1'
           git push origin HEAD:tao-klarjeti-app
